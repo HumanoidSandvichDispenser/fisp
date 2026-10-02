@@ -1,6 +1,7 @@
-# Lisf
+# Fisp
 
-A filesystem-based Lisp esolang because everything is a file.
+**FI**le**S**ystem **P**rocessing: a FUSE Lisp esolang because
+everything is a file!
 
 This Lisp implements the `atom`, `eq`, `car`, `cdr`, `cons` primitive
 functions, the `+`, `-`, `mul` (`*`), `div` (`/`) arithmetic functions, as well

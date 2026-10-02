@@ -1,6 +1,10 @@
-[package]
-name = "fisp"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "1.0.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+fisp-evaluator = { path = "crates/fisp-evaluator" }

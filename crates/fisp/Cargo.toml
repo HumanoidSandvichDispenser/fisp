@@ -1,0 +1,7 @@
+[package]
+name = "fisp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+fisp-evaluator.workspace = true

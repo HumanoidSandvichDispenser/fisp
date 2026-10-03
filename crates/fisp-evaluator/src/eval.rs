@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use crate::{
+    builtins,
     defs::Definitions,
     env::Environment,
     expr::{Expression, Value},
@@ -10,6 +11,12 @@ use crate::{
 pub enum EvalError {
     UnresolvedSymbol(Expression),
     NotFunction(Value),
+    Type {
+        expected: &'static str,
+        found: Value,
+    },
+    DivisionByZero,
+    Overflow,
 }
 
 pub fn evaluate(expression: &Expression, defs: &Definitions) -> Result<Value, EvalError> {
@@ -27,8 +34,12 @@ pub fn evaluate_with_env(
         Expression::True => Ok(Value::True),
         Expression::Number(n) => Ok(Value::Number(*n)),
         Expression::String(s) => Ok(Value::String(s.clone())),
-        // Locals shadow globals; globals are looked up at call time, not captured.
-        Expression::Symbol(s) => match env.get(s).or_else(|| defs.get(s)).cloned() {
+        Expression::Symbol(s) => match env
+            .get(s)
+            .or_else(|| defs.get(s))
+            .cloned()
+            .or_else(|| builtins::lookup(s))
+        {
             Some(value) => Ok(value),
             None => Err(EvalError::UnresolvedSymbol(expression.clone())),
         },
@@ -63,6 +74,7 @@ pub fn evaluate_with_env(
 
             Ok(func)
         }
+        Expression::Primitive(op) => builtins::run(*op, &env),
     }
 }
 
@@ -319,5 +331,16 @@ mod tests {
         let result = evaluate(&Expression::Symbol("answer".to_owned()), &defs);
 
         assert!(matches!(result, Err(EvalError::UnresolvedSymbol(_))));
+    }
+
+    #[test]
+    fn cons_should_build_list() {
+        let expr = cons_e(
+            Expression::Number(1),
+            cons_e(Expression::Number(2), Expression::Nil),
+        );
+        let result = evaluate(&expr, &Definitions::new()).unwrap();
+
+        assert_eq!(result, list_v(vec![Value::Number(1), Value::Number(2)]));
     }
 }

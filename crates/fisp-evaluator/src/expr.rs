@@ -1,5 +1,6 @@
-use std::rc::Rc;
-use crate::env::Environment;
+use std::{fmt, rc::Rc};
+
+use crate::{builtins::Op, env::Environment};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -53,6 +54,36 @@ impl PartialEq for Value {
     }
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::Nil => write!(f, "nil"),
+            Value::True => write!(f, "t"),
+            Value::Number(n) => write!(f, "{n}"),
+            Value::String(s) | Value::Symbol(s) => write!(f, "{s}"),
+            Value::Cons(car, cdr) => {
+                write!(f, "({car}")?;
+                let mut rest = cdr.as_ref();
+                loop {
+                    match rest {
+                        Value::Nil => break,
+                        Value::Cons(car, cdr) => {
+                            write!(f, " {car}")?;
+                            rest = cdr;
+                        }
+                        other => {
+                            write!(f, " . {other}")?;
+                            break;
+                        }
+                    }
+                }
+                write!(f, ")")
+            }
+            Value::Closure { param, .. } => write!(f, "#<lambda {param}>"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Nil,
@@ -64,4 +95,6 @@ pub enum Expression {
     If(Box<Expression>, Box<Expression>, Box<Expression>),
     Lambda(Rc<str>, Rc<Expression>),
     Application(Box<Expression>, Vec<Expression>),
+    /// Body of a built-in closure.
+    Primitive(Op),
 }

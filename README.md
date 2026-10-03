@@ -16,7 +16,7 @@ The syntax of Fisp is a Polish notation without parentheses. As a result,
 variadic functions can be defined, but they must be sequenced with `call`
 calls. For example, the following expression:
 
-```lisp
+```bash
 +/1/2/3
 ```
 
@@ -28,7 +28,7 @@ Function definitions must be explicitly curried. For example, the following expr
 
 ```lisp
 (lambda (x y) (+ x y))
-=> (lambda (x) (lambda (y) (+ x y)))
+;; => (lambda (x) (lambda (y) (+ x y)))
 ```
 
 must be written as:

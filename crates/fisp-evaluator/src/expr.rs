@@ -8,6 +8,16 @@ pub enum Type {
     Function(Box<Type>),
 }
 
+impl Type {
+    /// Returns the number of arguments that a function type takes.
+    pub fn arity(&self) -> usize {
+        match self {
+            Type::Value => 0,
+            Type::Function(inner) => 1 + inner.arity(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     /// The empty list, which is also used to represent the boolean value false.
@@ -81,6 +91,16 @@ impl fmt::Display for Value {
             }
             Value::Closure { param, .. } => write!(f, "#<lambda {param}>"),
         }
+    }
+}
+
+impl FromIterator<Value> for Value {
+    /// Builds a proper list from the items, in order.
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
+        let items: Vec<Value> = iter.into_iter().collect();
+        items.into_iter().rev().fold(Value::Nil, |tail, head| {
+            Value::Cons(Box::new(head), Box::new(tail))
+        })
     }
 }
 

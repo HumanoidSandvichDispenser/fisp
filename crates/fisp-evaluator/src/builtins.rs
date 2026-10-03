@@ -116,8 +116,8 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
             value => Err(type_error("cons", value)),
         },
         Op::Cons => Ok(Value::Cons(Box::new(arg(0)?), Box::new(arg(1)?))),
-        Op::Atom => Ok(truth(!matches!(arg(0)?, Value::Cons(..)))),
-        Op::Eq => Ok(truth(arg(0)? == arg(1)?)),
+        Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
+        Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
         Op::Show => Ok(Value::String(arg(0)?.to_string())),
     }
 }
@@ -144,11 +144,7 @@ fn division(a: Value, b: Value, op: fn(i64, i64) -> Option<i64>) -> Result<Value
 }
 
 fn comparison(a: Value, b: Value, op: fn(i64, i64) -> bool) -> Result<Value, EvalError> {
-    Ok(truth(op(number(a)?, number(b)?)))
-}
-
-fn truth(b: bool) -> Value {
-    if b { Value::True } else { Value::Nil }
+    Ok(Value::from(op(number(a)?, number(b)?)))
 }
 
 fn type_error(expected: &'static str, found: Value) -> EvalError {
@@ -167,6 +163,10 @@ mod tests {
         Expression::Symbol(name.to_owned())
     }
 
+    fn lit(value: impl Into<Value>) -> Expression {
+        Expression::Literal(value.into())
+    }
+
     fn app(func: Expression, args: Vec<Expression>) -> Expression {
         Expression::Application(Box::new(func), args)
     }
@@ -181,69 +181,51 @@ mod tests {
 
     #[test]
     fn add_should_add_numbers() {
-        let result = eval(app(
-            sym("+"),
-            vec![Expression::Number(1), Expression::Number(2)],
-        ));
+        let result = eval(app(sym("+"), vec![lit(1), lit(2)]));
 
         assert_eq!(result.unwrap(), Value::Number(3));
     }
 
     #[test]
     fn builtin_should_be_partially_applicable() {
-        let inc = app(sym("+"), vec![Expression::Number(1)]);
-        let result = eval(app(inc, vec![Expression::Number(2)]));
+        let inc = app(sym("+"), vec![lit(1)]);
+        let result = eval(app(inc, vec![lit(2)]));
 
         assert_eq!(result.unwrap(), Value::Number(3));
     }
 
     #[test]
     fn partial_builtin_should_print_as_closure() {
-        let inc = app(sym("+"), vec![Expression::Number(1)]);
+        let inc = app(sym("+"), vec![lit(1)]);
 
         assert_eq!(show(inc), Value::String("#<lambda b>".to_owned()));
     }
 
     #[test]
     fn mul_should_alias_star() {
-        let result = eval(app(
-            sym("mul"),
-            vec![Expression::Number(6), Expression::Number(7)],
-        ));
+        let result = eval(app(sym("mul"), vec![lit(6), lit(7)]));
 
         assert_eq!(result.unwrap(), Value::Number(42));
     }
 
     #[test]
     fn overflow_should_error() {
-        let result = eval(app(
-            sym("+"),
-            vec![Expression::Number(i64::MAX), Expression::Number(1)],
-        ));
+        let result = eval(app(sym("+"), vec![lit(i64::MAX), lit(1)]));
 
         assert!(matches!(result, Err(EvalError::Overflow)));
     }
 
     #[test]
     fn division_by_zero_should_error() {
-        let result = eval(app(
-            sym("div"),
-            vec![Expression::Number(1), Expression::Number(0)],
-        ));
+        let result = eval(app(sym("div"), vec![lit(1), lit(0)]));
 
         assert!(matches!(result, Err(EvalError::DivisionByZero)));
     }
 
     #[test]
     fn comparison_should_return_t_or_nil() {
-        let lt = eval(app(
-            sym("<"),
-            vec![Expression::Number(1), Expression::Number(2)],
-        ));
-        let gt = eval(app(
-            sym(">"),
-            vec![Expression::Number(1), Expression::Number(2)],
-        ));
+        let lt = eval(app(sym("<"), vec![lit(1), lit(2)]));
+        let gt = eval(app(sym(">"), vec![lit(1), lit(2)]));
 
         assert_eq!(lt.unwrap(), Value::True);
         assert_eq!(gt.unwrap(), Value::Nil);
@@ -251,7 +233,7 @@ mod tests {
 
     #[test]
     fn car_of_non_cons_should_be_type_error() {
-        let result = eval(app(sym("car"), vec![Expression::Nil]));
+        let result = eval(app(sym("car"), vec![lit(Value::Nil)]));
 
         assert!(matches!(
             result,
@@ -264,7 +246,7 @@ mod tests {
 
     #[test]
     fn arithmetic_on_non_number_should_be_type_error() {
-        let result = eval(app(sym("+"), vec![Expression::True, Expression::Number(1)]));
+        let result = eval(app(sym("+"), vec![lit(Value::True), lit(1)]));
 
         assert!(matches!(
             result,
@@ -277,25 +259,16 @@ mod tests {
 
     #[test]
     fn call_should_apply_function_value() {
-        let result = eval(app(
-            sym("call"),
-            vec![sym("+"), Expression::Number(1), Expression::Number(2)],
-        ));
+        let result = eval(app(sym("call"), vec![sym("+"), lit(1), lit(2)]));
 
         assert_eq!(result.unwrap(), Value::Number(3));
     }
 
     #[test]
     fn atom_should_be_t_unless_cons() {
-        let pair = app(
-            sym("cons"),
-            vec![Expression::Number(1), Expression::Number(2)],
-        );
+        let pair = app(sym("cons"), vec![lit(1), lit(2)]);
 
-        assert_eq!(
-            eval(app(sym("atom"), vec![Expression::Number(1)])).unwrap(),
-            Value::True
-        );
+        assert_eq!(eval(app(sym("atom"), vec![lit(1)])).unwrap(), Value::True);
         assert_eq!(eval(app(sym("atom"), vec![pair])).unwrap(), Value::Nil);
     }
 
@@ -303,15 +276,9 @@ mod tests {
     fn show_should_print_lists() {
         let list = app(
             sym("cons"),
-            vec![
-                Expression::Number(1),
-                app(sym("cons"), vec![Expression::Number(2), Expression::Nil]),
-            ],
+            vec![lit(1), app(sym("cons"), vec![lit(2), lit(Value::Nil)])],
         );
-        let pair = app(
-            sym("cons"),
-            vec![Expression::Number(1), Expression::Number(2)],
-        );
+        let pair = app(sym("cons"), vec![lit(1), lit(2)]);
 
         assert_eq!(show(list), Value::String("(1 2)".to_owned()));
         assert_eq!(show(pair), Value::String("(1 . 2)".to_owned()));

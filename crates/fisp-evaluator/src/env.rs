@@ -10,7 +10,10 @@ pub struct Environment {
 
 impl Environment {
     pub fn new() -> Self {
-        Environment { parent: None, bindings: HashMap::new() }
+        Environment {
+            parent: None,
+            bindings: HashMap::new(),
+        }
     }
 
     pub fn with_parent(mut self: Self, parent: Rc<Environment>) -> Self {

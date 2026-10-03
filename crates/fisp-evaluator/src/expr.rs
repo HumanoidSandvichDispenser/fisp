@@ -33,7 +33,7 @@ pub enum Value {
         param: Rc<str>,
         body: Rc<Expression>,
         env: Rc<Environment>,
-    }
+    },
 }
 
 impl PartialEq for Value {
@@ -84,18 +84,50 @@ impl fmt::Display for Value {
     }
 }
 
+impl From<i64> for Value {
+    fn from(n: i64) -> Self {
+        Value::Number(n)
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl From<Rc<str>> for Value {
+    fn from(s: Rc<str>) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        if b { Value::True } else { Value::Nil }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
-    Nil,
-    True,
-    Number(i64),
     String(String),
     Symbol(String),
     Literal(Value),
-    Quote(Vec<String>),
     If(Box<Expression>, Box<Expression>, Box<Expression>),
     Lambda(Rc<str>, Rc<Expression>),
     Application(Box<Expression>, Vec<Expression>),
     /// Body of a built-in closure.
     Primitive(Op),
+}
+
+impl From<Value> for Expression {
+    fn from(value: Value) -> Self {
+        Expression::Literal(value)
+    }
 }

@@ -30,9 +30,6 @@ pub fn evaluate_with_env(
     defs: &Definitions,
 ) -> Result<Value, EvalError> {
     match expression {
-        Expression::Nil => Ok(Value::Nil),
-        Expression::True => Ok(Value::True),
-        Expression::Number(n) => Ok(Value::Number(*n)),
         Expression::String(s) => Ok(Value::String(s.clone())),
         Expression::Symbol(s) => match env
             .get(s)
@@ -44,15 +41,6 @@ pub fn evaluate_with_env(
             None => Err(EvalError::UnresolvedSymbol(expression.clone())),
         },
         Expression::Literal(value) => Ok(value.clone()),
-        Expression::Quote(symbols) => {
-            let mut result = Value::Nil;
-
-            for symbol in symbols.iter().rev() {
-                result = Value::Cons(Box::new(Value::Symbol(symbol.clone())), Box::new(result));
-            }
-
-            Ok(result)
-        }
         Expression::If(cond, then_branch, else_branch) => {
             let cond_value = evaluate_with_env(cond, env.clone(), defs)?;
             match cond_value {
@@ -101,6 +89,10 @@ mod tests {
         Definition { def_type, value }
     }
 
+    fn lit(value: impl Into<Value>) -> Expression {
+        Expression::Literal(value.into())
+    }
+
     fn cons_v(a: Value, b: Value) -> Value {
         Value::Cons(Box::new(a), Box::new(b))
     }
@@ -127,7 +119,7 @@ mod tests {
 
     #[test]
     fn number_should_return_number_value() {
-        let expr = Expression::Number(42);
+        let expr = lit(42);
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
         assert_eq!(result, Value::Number(42));
@@ -135,7 +127,7 @@ mod tests {
 
     #[test]
     fn nil_should_return_nil_value() {
-        let expr = Expression::Nil;
+        let expr = lit(Value::Nil);
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
         assert_eq!(result, Value::Nil);
@@ -143,7 +135,7 @@ mod tests {
 
     #[test]
     fn true_should_return_true_value() {
-        let expr = Expression::True;
+        let expr = lit(Value::True);
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
         assert_eq!(result, Value::True);
@@ -158,25 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn quote_should_return_list_of_symbols() {
-        let expr = Expression::Quote(vec!["x".to_owned(), "y".to_string()]);
-        let result = evaluate(&expr, &Definitions::new()).unwrap();
-
-        assert_eq!(
-            result,
-            cons_v(
-                Value::Symbol("x".to_owned()),
-                cons_v(Value::Symbol("y".to_owned()), Value::Nil)
-            )
-        );
-    }
-
-    #[test]
     fn if_should_return_true_branch() {
         let expr = Expression::If(
-            Box::new(Expression::True),
-            Box::new(Expression::Number(1)),
-            Box::new(Expression::Number(2)),
+            Box::new(lit(Value::True)),
+            Box::new(lit(1)),
+            Box::new(lit(2)),
         );
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
@@ -186,9 +164,9 @@ mod tests {
     #[test]
     fn if_should_return_false_branch() {
         let expr = Expression::If(
-            Box::new(Expression::Nil),
-            Box::new(Expression::Number(1)),
-            Box::new(Expression::Number(2)),
+            Box::new(lit(Value::Nil)),
+            Box::new(lit(1)),
+            Box::new(lit(2)),
         );
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
@@ -221,7 +199,7 @@ mod tests {
                 "x".into(),
                 Rc::new(Expression::Symbol("x".to_owned())),
             )),
-            vec![Expression::Number(42)],
+            vec![lit(42)],
         );
 
         let result = evaluate(&expr, &Definitions::new()).unwrap();
@@ -239,7 +217,7 @@ mod tests {
                     Rc::new(Expression::Symbol("a".to_owned())),
                 )),
             )),
-            vec![Expression::Number(1), Expression::Number(2)],
+            vec![lit(1), lit(2)],
         );
 
         let result = evaluate(&expr, &Definitions::new()).unwrap();
@@ -258,9 +236,9 @@ mod tests {
                         Rc::new(Expression::Symbol("a".to_owned())),
                     )),
                 )),
-                vec![Expression::Number(1)],
+                vec![lit(1)],
             )),
-            vec![Expression::Number(2)],
+            vec![lit(2)],
         );
 
         let result = evaluate(&expr, &Definitions::new()).unwrap();
@@ -270,8 +248,7 @@ mod tests {
 
     #[test]
     fn applying_non_function_should_error() {
-        let expr =
-            Expression::Application(Box::new(Expression::Number(1)), vec![Expression::Number(2)]);
+        let expr = Expression::Application(Box::new(lit(1)), vec![lit(2)]);
 
         assert!(matches!(
             evaluate(&expr, &Definitions::new()),
@@ -298,7 +275,7 @@ mod tests {
         let mut defs = Definitions::new();
         defs.set("x".to_owned(), def(Type::Value, Value::Number(1)));
 
-        let expr = Expression::Application(Box::new(identity()), vec![Expression::Number(2)]);
+        let expr = Expression::Application(Box::new(identity()), vec![lit(2)]);
         let result = evaluate(&expr, &defs).unwrap();
 
         assert_eq!(result, Value::Number(2));
@@ -317,13 +294,17 @@ mod tests {
         );
         let f = evaluate(&f_expr, &defs).unwrap();
         let g = evaluate(&identity(), &defs).unwrap();
-        defs.set("f".to_owned(), def(Type::Function(Box::new(Type::Value)), f));
-        defs.set("g".to_owned(), def(Type::Function(Box::new(Type::Value)), g));
-
-        let expr = Expression::Application(
-            Box::new(Expression::Symbol("f".to_owned())),
-            vec![Expression::Number(7)],
+        defs.set(
+            "f".to_owned(),
+            def(Type::Function(Box::new(Type::Value)), f),
         );
+        defs.set(
+            "g".to_owned(),
+            def(Type::Function(Box::new(Type::Value)), g),
+        );
+
+        let expr =
+            Expression::Application(Box::new(Expression::Symbol("f".to_owned())), vec![lit(7)]);
         let result = evaluate(&expr, &defs).unwrap();
 
         assert_eq!(result, Value::Number(7));
@@ -342,10 +323,7 @@ mod tests {
 
     #[test]
     fn cons_should_build_list() {
-        let expr = cons_e(
-            Expression::Number(1),
-            cons_e(Expression::Number(2), Expression::Nil),
-        );
+        let expr = cons_e(lit(1), cons_e(lit(2), lit(Value::Nil)));
         let result = evaluate(&expr, &Definitions::new()).unwrap();
 
         assert_eq!(result, list_v(vec![Value::Number(1), Value::Number(2)]));
@@ -359,9 +337,9 @@ mod tests {
             Rc::new(Expression::If(
                 Box::new(Expression::Application(
                     Box::new(Expression::Symbol("=".to_owned())),
-                    vec![Expression::Symbol("n".to_owned()), Expression::Number(0)],
+                    vec![Expression::Symbol("n".to_owned()), lit(0)],
                 )),
-                Box::new(Expression::Number(1)),
+                Box::new(lit(1)),
                 Box::new(Expression::Application(
                     Box::new(Expression::Symbol("*".to_owned())),
                     vec![
@@ -370,7 +348,7 @@ mod tests {
                             Box::new(Expression::Symbol("fact".to_owned())),
                             vec![Expression::Application(
                                 Box::new(Expression::Symbol("-".to_owned())),
-                                vec![Expression::Symbol("n".to_owned()), Expression::Number(1)],
+                                vec![Expression::Symbol("n".to_owned()), lit(1)],
                             )],
                         ),
                     ],
@@ -378,11 +356,14 @@ mod tests {
             )),
         );
         let fact = evaluate(&fact_expr, &defs).unwrap();
-        defs.set("fact".to_owned(), def(Type::Function(Box::new(Type::Value)), fact));
+        defs.set(
+            "fact".to_owned(),
+            def(Type::Function(Box::new(Type::Value)), fact),
+        );
 
         let expr = Expression::Application(
             Box::new(Expression::Symbol("fact".to_owned())),
-            vec![Expression::Number(5)],
+            vec![lit(5)],
         );
         let result = evaluate(&expr, &defs).unwrap();
 

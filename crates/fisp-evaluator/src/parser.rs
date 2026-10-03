@@ -13,7 +13,6 @@ pub enum ParseError {
     Unbound,
     TypeMismatch,
     BadName,
-    UnexpectedToken,
 }
 
 pub enum Token<'a> {

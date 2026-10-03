@@ -8,6 +8,7 @@ use crate::{
 #[derive(Debug)]
 pub enum EvalError {
     UnresolvedSymbol(Expression),
+    NotFunction(Value),
 }
 
 pub fn evaluate(expression: &Expression) -> Result<Value, EvalError> {
@@ -30,9 +31,11 @@ pub fn evaluate_with_env(
         },
         Expression::Quote(symbols) => {
             let mut result = Value::Nil;
+
             for symbol in symbols.iter().rev() {
                 result = Value::Cons(Box::new(Value::Symbol(symbol.clone())), Box::new(result));
             }
+
             Ok(result)
         }
         Expression::If(cond, then_branch, else_branch) => {
@@ -42,12 +45,32 @@ pub fn evaluate_with_env(
                 _ => evaluate_with_env(then_branch, env),
             }
         }
-        Expression::Lambda(param, body) => {
-            todo!()
-        },
+        Expression::Lambda(param, body) => Ok(Value::Closure {
+            param: param.clone(),
+            body: body.clone(),
+            env,
+        }),
         Expression::Application(func_expr, args_exprs) => {
-            todo!()
+            let mut func = evaluate_with_env(func_expr, env.clone())?;
+
+            for arg_expr in args_exprs {
+                let arg = evaluate_with_env(arg_expr, env.clone())?;
+                func = apply(func, arg)?;
+            }
+
+            Ok(func)
         }
+    }
+}
+
+pub fn apply(func: Value, arg: Value) -> Result<Value, EvalError> {
+    match func {
+        Value::Closure { param, body, env } => {
+            let mut frame = Environment::new().with_parent(env);
+            frame.set(param.to_string(), arg);
+            evaluate_with_env(&body, Rc::new(frame))
+        }
+        _ => Err(EvalError::NotFunction(func)),
     }
 }
 
@@ -154,8 +177,8 @@ mod tests {
     #[test]
     fn lambda_should_return_closure() {
         let expr = Expression::Lambda(
-            Box::new(Expression::Symbol("x".to_owned())),
-            Box::new(Expression::Symbol("x".to_owned())),
+            "x".into(),
+            Rc::new(Expression::Symbol("x".to_owned())),
         );
 
         let result = evaluate(&expr).unwrap();
@@ -166,11 +189,8 @@ mod tests {
                 body,
                 env: _,
             } => {
-                let param = param.deref();
-                let body = body.deref();
-
-                assert_eq!(param.clone(), "x".to_owned());
-                assert_eq!(body.clone(), Expression::Symbol("x".to_owned()));
+                assert_eq!(param.deref(), "x");
+                assert_eq!(body.deref(), &Expression::Symbol("x".to_owned()));
             }
             _ => panic!("Expected closure"),
         }
@@ -180,18 +200,63 @@ mod tests {
     fn application_should_return_result_of_function() {
         let expr = Expression::Application(
             Box::new(Expression::Lambda(
-                Box::new(Expression::Symbol("x".to_owned())),
-                Box::new(Expression::Symbol("x".to_owned())),
+                "x".into(),
+                Rc::new(Expression::Symbol("x".to_owned())),
             )),
             vec![Expression::Number(42)],
         );
 
-        let mut env = Rc::new(Environment::new());
-        let env_mut = Rc::get_mut(&mut env).unwrap();
-        env_mut.set("x".to_owned(), Value::Number(42));
-
-        let result = evaluate_with_env(&expr, env.clone()).unwrap();
+        let result = evaluate(&expr).unwrap();
 
         assert_eq!(result, Value::Number(42));
+    }
+
+    #[test]
+    fn curried_application_should_apply_one_argument_at_a_time() {
+        let expr = Expression::Application(
+            Box::new(Expression::Lambda(
+                "a".into(),
+                Rc::new(Expression::Lambda(
+                    "b".into(),
+                    Rc::new(Expression::Symbol("a".to_owned())),
+                )),
+            )),
+            vec![Expression::Number(1), Expression::Number(2)],
+        );
+
+        let result = evaluate(&expr).unwrap();
+
+        assert_eq!(result, Value::Number(1));
+    }
+
+    #[test]
+    fn closure_should_capture_its_environment() {
+        let expr = Expression::Application(
+            Box::new(Expression::Application(
+                Box::new(Expression::Lambda(
+                    "a".into(),
+                    Rc::new(Expression::Lambda(
+                        "b".into(),
+                        Rc::new(Expression::Symbol("a".to_owned())),
+                    )),
+                )),
+                vec![Expression::Number(1)],
+            )),
+            vec![Expression::Number(2)],
+        );
+
+        let result = evaluate(&expr).unwrap();
+
+        assert_eq!(result, Value::Number(1));
+    }
+
+    #[test]
+    fn applying_non_function_should_error() {
+        let expr = Expression::Application(
+            Box::new(Expression::Number(1)),
+            vec![Expression::Number(2)],
+        );
+
+        assert!(matches!(evaluate(&expr), Err(EvalError::NotFunction(_))));
     }
 }

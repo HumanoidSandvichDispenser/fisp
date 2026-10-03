@@ -1,6 +1,12 @@
 use std::rc::Rc;
 use crate::env::Environment;
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    Value,
+    Function(Box<Type>),
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     /// The empty list, which is also used to represent the boolean value false.
@@ -23,13 +29,9 @@ pub enum Value {
 
     /// A closure that captures its environment.
     Closure {
-        param: String,
-        body: Box<Expression>,
+        param: Rc<str>,
+        body: Rc<Expression>,
         env: Rc<Environment>,
-
-        // The number of parameters the closure expects. This is used to check if the closure is
-        // called with the correct number of arguments and for static and runtime typechecking.
-        //arity: usize,
     }
 }
 
@@ -60,6 +62,6 @@ pub enum Expression {
     Symbol(String),
     Quote(Vec<String>),
     If(Box<Expression>, Box<Expression>, Box<Expression>),
-    Lambda(Box<Expression>, Box<Expression>),
+    Lambda(Rc<str>, Rc<Expression>),
     Application(Box<Expression>, Vec<Expression>),
 }

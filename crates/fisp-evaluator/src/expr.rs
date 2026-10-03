@@ -91,6 +91,7 @@ pub enum Expression {
     Number(i64),
     String(String),
     Symbol(String),
+    Literal(Value),
     Quote(Vec<String>),
     If(Box<Expression>, Box<Expression>, Box<Expression>),
     Lambda(Rc<str>, Rc<Expression>),

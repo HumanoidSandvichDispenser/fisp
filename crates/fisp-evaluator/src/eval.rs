@@ -36,13 +36,14 @@ pub fn evaluate_with_env(
         Expression::String(s) => Ok(Value::String(s.clone())),
         Expression::Symbol(s) => match env
             .get(s)
-            .or_else(|| defs.get(s))
+            .or_else(|| defs.get(s).map(|def| &def.value))
             .cloned()
             .or_else(|| builtins::lookup(s))
         {
             Some(value) => Ok(value),
             None => Err(EvalError::UnresolvedSymbol(expression.clone())),
         },
+        Expression::Literal(value) => Ok(value.clone()),
         Expression::Quote(symbols) => {
             let mut result = Value::Nil;
 
@@ -94,6 +95,11 @@ mod tests {
     use std::ops::Deref;
 
     use super::*;
+    use crate::{defs::Definition, expr::Type};
+
+    fn def(def_type: Type, value: Value) -> Definition {
+        Definition { def_type, value }
+    }
 
     fn cons_v(a: Value, b: Value) -> Value {
         Value::Cons(Box::new(a), Box::new(b))
@@ -280,7 +286,7 @@ mod tests {
     #[test]
     fn symbol_should_resolve_to_definition() {
         let mut defs = Definitions::new();
-        defs.set("answer".to_owned(), Value::Number(42));
+        defs.set("answer".to_owned(), def(Type::Value, Value::Number(42)));
 
         let result = evaluate(&Expression::Symbol("answer".to_owned()), &defs).unwrap();
 
@@ -290,7 +296,7 @@ mod tests {
     #[test]
     fn parameter_should_shadow_definition() {
         let mut defs = Definitions::new();
-        defs.set("x".to_owned(), Value::Number(1));
+        defs.set("x".to_owned(), def(Type::Value, Value::Number(1)));
 
         let expr = Expression::Application(Box::new(identity()), vec![Expression::Number(2)]);
         let result = evaluate(&expr, &defs).unwrap();
@@ -310,8 +316,9 @@ mod tests {
             )),
         );
         let f = evaluate(&f_expr, &defs).unwrap();
-        defs.set("f".to_owned(), f);
-        defs.set("g".to_owned(), evaluate(&identity(), &defs).unwrap());
+        let g = evaluate(&identity(), &defs).unwrap();
+        defs.set("f".to_owned(), def(Type::Function(Box::new(Type::Value)), f));
+        defs.set("g".to_owned(), def(Type::Function(Box::new(Type::Value)), g));
 
         let expr = Expression::Application(
             Box::new(Expression::Symbol("f".to_owned())),
@@ -325,7 +332,7 @@ mod tests {
     #[test]
     fn removed_definition_should_be_unresolved() {
         let mut defs = Definitions::new();
-        defs.set("answer".to_owned(), Value::Number(42));
+        defs.set("answer".to_owned(), def(Type::Value, Value::Number(42)));
         defs.remove("answer");
 
         let result = evaluate(&Expression::Symbol("answer".to_owned()), &defs);
@@ -371,7 +378,7 @@ mod tests {
             )),
         );
         let fact = evaluate(&fact_expr, &defs).unwrap();
-        defs.set("fact".to_owned(), fact);
+        defs.set("fact".to_owned(), def(Type::Function(Box::new(Type::Value)), fact));
 
         let expr = Expression::Application(
             Box::new(Expression::Symbol("fact".to_owned())),

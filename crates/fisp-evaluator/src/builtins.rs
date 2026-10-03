@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::{
     env::Environment,
     eval::EvalError,
-    expr::{Expression, Value},
+    expr::{Expression, Type, Value},
 };
 
 const PARAMS: [&str; 2] = ["a", "b"];
@@ -70,16 +70,25 @@ pub fn lookup(name: &str) -> Option<Value> {
 }
 
 fn curry(params: &[&str], body: Expression) -> Value {
-    let body = params[1..]
-        .iter()
-        .rev()
-        .fold(body, |body, param| Expression::Lambda((*param).into(), Rc::new(body)));
+    let body = params[1..].iter().rev().fold(body, |body, param| {
+        Expression::Lambda((*param).into(), Rc::new(body))
+    });
 
     Value::Closure {
         param: params[0].into(),
         body: Rc::new(body),
         env: Rc::new(Environment::new()),
     }
+}
+
+pub fn type_of(name: &str) -> Option<Type> {
+    let arity = match name {
+        "call" => 2,
+        _ => Op::from_name(name)?.arity(),
+    };
+
+    let symbol_type = (0..arity).fold(Type::Value, |acc, _| Type::Function(Box::new(acc)));
+    Some(symbol_type)
 }
 
 pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
@@ -149,7 +158,10 @@ fn type_error(expected: &'static str, found: Value) -> EvalError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{defs::Definitions, eval::evaluate};
+    use crate::{
+        defs::{Definition, Definitions},
+        eval::evaluate,
+    };
 
     fn sym(name: &str) -> Expression {
         Expression::Symbol(name.to_owned())
@@ -169,7 +181,10 @@ mod tests {
 
     #[test]
     fn add_should_add_numbers() {
-        let result = eval(app(sym("+"), vec![Expression::Number(1), Expression::Number(2)]));
+        let result = eval(app(
+            sym("+"),
+            vec![Expression::Number(1), Expression::Number(2)],
+        ));
 
         assert_eq!(result.unwrap(), Value::Number(3));
     }
@@ -191,29 +206,44 @@ mod tests {
 
     #[test]
     fn mul_should_alias_star() {
-        let result = eval(app(sym("mul"), vec![Expression::Number(6), Expression::Number(7)]));
+        let result = eval(app(
+            sym("mul"),
+            vec![Expression::Number(6), Expression::Number(7)],
+        ));
 
         assert_eq!(result.unwrap(), Value::Number(42));
     }
 
     #[test]
     fn overflow_should_error() {
-        let result = eval(app(sym("+"), vec![Expression::Number(i64::MAX), Expression::Number(1)]));
+        let result = eval(app(
+            sym("+"),
+            vec![Expression::Number(i64::MAX), Expression::Number(1)],
+        ));
 
         assert!(matches!(result, Err(EvalError::Overflow)));
     }
 
     #[test]
     fn division_by_zero_should_error() {
-        let result = eval(app(sym("div"), vec![Expression::Number(1), Expression::Number(0)]));
+        let result = eval(app(
+            sym("div"),
+            vec![Expression::Number(1), Expression::Number(0)],
+        ));
 
         assert!(matches!(result, Err(EvalError::DivisionByZero)));
     }
 
     #[test]
     fn comparison_should_return_t_or_nil() {
-        let lt = eval(app(sym("<"), vec![Expression::Number(1), Expression::Number(2)]));
-        let gt = eval(app(sym(">"), vec![Expression::Number(1), Expression::Number(2)]));
+        let lt = eval(app(
+            sym("<"),
+            vec![Expression::Number(1), Expression::Number(2)],
+        ));
+        let gt = eval(app(
+            sym(">"),
+            vec![Expression::Number(1), Expression::Number(2)],
+        ));
 
         assert_eq!(lt.unwrap(), Value::True);
         assert_eq!(gt.unwrap(), Value::Nil);
@@ -223,14 +253,26 @@ mod tests {
     fn car_of_non_cons_should_be_type_error() {
         let result = eval(app(sym("car"), vec![Expression::Nil]));
 
-        assert!(matches!(result, Err(EvalError::Type { expected: "cons", .. })));
+        assert!(matches!(
+            result,
+            Err(EvalError::Type {
+                expected: "cons",
+                ..
+            })
+        ));
     }
 
     #[test]
     fn arithmetic_on_non_number_should_be_type_error() {
         let result = eval(app(sym("+"), vec![Expression::True, Expression::Number(1)]));
 
-        assert!(matches!(result, Err(EvalError::Type { expected: "number", .. })));
+        assert!(matches!(
+            result,
+            Err(EvalError::Type {
+                expected: "number",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -245,9 +287,15 @@ mod tests {
 
     #[test]
     fn atom_should_be_t_unless_cons() {
-        let pair = app(sym("cons"), vec![Expression::Number(1), Expression::Number(2)]);
+        let pair = app(
+            sym("cons"),
+            vec![Expression::Number(1), Expression::Number(2)],
+        );
 
-        assert_eq!(eval(app(sym("atom"), vec![Expression::Number(1)])).unwrap(), Value::True);
+        assert_eq!(
+            eval(app(sym("atom"), vec![Expression::Number(1)])).unwrap(),
+            Value::True
+        );
         assert_eq!(eval(app(sym("atom"), vec![pair])).unwrap(), Value::Nil);
     }
 
@@ -260,7 +308,10 @@ mod tests {
                 app(sym("cons"), vec![Expression::Number(2), Expression::Nil]),
             ],
         );
-        let pair = app(sym("cons"), vec![Expression::Number(1), Expression::Number(2)]);
+        let pair = app(
+            sym("cons"),
+            vec![Expression::Number(1), Expression::Number(2)],
+        );
 
         assert_eq!(show(list), Value::String("(1 2)".to_owned()));
         assert_eq!(show(pair), Value::String("(1 . 2)".to_owned()));
@@ -269,7 +320,13 @@ mod tests {
     #[test]
     fn definition_should_shadow_builtin() {
         let mut defs = Definitions::new();
-        defs.set("car".to_owned(), Value::Number(1));
+        defs.set(
+            "car".to_owned(),
+            Definition {
+                def_type: Type::Value,
+                value: Value::Number(1),
+            },
+        );
 
         let result = evaluate(&sym("car"), &defs);
 

@@ -88,7 +88,7 @@ fn parse_expr<'a>(
         Token::Lambda => {
             let param_name = segments.next().ok_or(ParseError::Incomplete)?;
 
-            if !is_valid_name(param_name) || builtins::type_of(param_name).is_some() {
+            if !is_valid_name(param_name) || is_function_name(param_name, defs) {
                 return Err(ParseError::BadName);
             }
 
@@ -204,6 +204,14 @@ fn is_valid_name(segment: &str) -> bool {
         && !RESERVED.contains(&segment)
 }
 
+/// Returns true if the name is a builtin or a definition that takes arguments.
+///
+/// Parameters may not shadow these names. Otherwise, the arity of a name would depend on where a
+/// lambda body ends, and a recursive definition could have more than one consistent arity.
+fn is_function_name(name: &str, defs: &Definitions) -> bool {
+    builtins::type_of(name).is_some() || defs.get(name).is_some_and(|def| def.def_type.arity() > 0)
+}
+
 fn type_of(name: &str, scope: &Scope, defs: &Definitions) -> Result<Type, ParseError> {
     scope
         .get(name)
@@ -306,6 +314,28 @@ mod tests {
         assert_eq!(error("λ/1/1"), ParseError::BadName);
         assert_eq!(error("λ/if/1"), ParseError::BadName);
         assert_eq!(error("λ/car/1"), ParseError::BadName);
+    }
+
+    #[test]
+    fn parameter_should_not_shadow_function_definition() {
+        let mut defs = Definitions::new();
+        defs.set(
+            "g".to_owned(),
+            Definition {
+                def_type: fun(Type::Value),
+                value: Value::Nil,
+            },
+        );
+        defs.set(
+            "c".to_owned(),
+            Definition {
+                def_type: Type::Value,
+                value: Value::Number(1),
+            },
+        );
+
+        assert_eq!(parse_path("λ/g/g", &defs).unwrap_err(), ParseError::BadName);
+        assert_eq!(parse_path("λ/c/c", &defs).unwrap().1, fun(Type::Value));
     }
 
     #[test]

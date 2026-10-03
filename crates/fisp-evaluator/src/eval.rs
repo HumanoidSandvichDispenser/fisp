@@ -343,4 +343,42 @@ mod tests {
 
         assert_eq!(result, list_v(vec![Value::Number(1), Value::Number(2)]));
     }
+
+    #[test]
+    fn factorial_should_compute_correctly() {
+        let mut defs = Definitions::new();
+        let fact_expr = Expression::Lambda(
+            "n".into(),
+            Rc::new(Expression::If(
+                Box::new(Expression::Application(
+                    Box::new(Expression::Symbol("=".to_owned())),
+                    vec![Expression::Symbol("n".to_owned()), Expression::Number(0)],
+                )),
+                Box::new(Expression::Number(1)),
+                Box::new(Expression::Application(
+                    Box::new(Expression::Symbol("*".to_owned())),
+                    vec![
+                        Expression::Symbol("n".to_owned()),
+                        Expression::Application(
+                            Box::new(Expression::Symbol("fact".to_owned())),
+                            vec![Expression::Application(
+                                Box::new(Expression::Symbol("-".to_owned())),
+                                vec![Expression::Symbol("n".to_owned()), Expression::Number(1)],
+                            )],
+                        ),
+                    ],
+                )),
+            )),
+        );
+        let fact = evaluate(&fact_expr, &defs).unwrap();
+        defs.set("fact".to_owned(), fact);
+
+        let expr = Expression::Application(
+            Box::new(Expression::Symbol("fact".to_owned())),
+            vec![Expression::Number(5)],
+        );
+        let result = evaluate(&expr, &defs).unwrap();
+
+        assert_eq!(result, Value::Number(120));
+    }
 }

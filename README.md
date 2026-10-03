@@ -34,7 +34,7 @@ Function definitions must be explicitly curried. For example, the following expr
 must be written as:
 
 ```bash
-lambda/x/lambda/y/+/*/x/*/y
+lambda/x/lambda/y/+/x/y
 ```
 
 ## Example

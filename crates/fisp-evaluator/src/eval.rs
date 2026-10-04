@@ -30,42 +30,59 @@ pub fn evaluate_with_env(
     env: Rc<Environment>,
     defs: &Definitions,
 ) -> Result<Value, EvalError> {
-    match expression {
-        Expression::String(s) => Ok(Value::String(s.clone())),
-        Expression::Symbol(s) => match env
-            .get(s)
-            .or_else(|| defs.get(s))
-            .cloned()
-            .or_else(|| builtins::lookup(s))
-        {
-            Some(value) => Ok(value),
-            None => Err(EvalError::UnresolvedSymbol(expression.clone())),
-        },
-        Expression::Literal(value) => Ok(value.clone()),
-        Expression::If(cond, then_branch, else_branch) => {
-            let cond_value = evaluate_with_env(cond, env.clone(), defs)?;
-            match cond_value {
-                Value::Nil => evaluate_with_env(else_branch, env.clone(), defs),
-                _ => evaluate_with_env(then_branch, env, defs),
-            }
-        }
-        Expression::Lambda(param, body) => Ok(Value::Closure {
-            param: param.clone(),
-            body: body.clone(),
-            env,
-        }),
-        Expression::Application(func_expr, args_exprs) => {
-            let mut func = evaluate_with_env(func_expr, env.clone(), defs)?;
+    let mut cur_expr = expression;
+    let mut next_application_body: Rc<Expression>;
+    let mut cur_env = env;
 
-            for arg_expr in args_exprs {
-                let arg = evaluate_with_env(arg_expr, env.clone(), defs)?;
-                func = apply(func, arg, defs)?;
-            }
+    loop {
+        match cur_expr {
+            Expression::String(s) => return Ok(Value::String(s.clone())),
+            Expression::Symbol(s) => return match cur_env
+                .get(s)
+                .or_else(|| defs.get(s))
+                .cloned()
+                .or_else(|| builtins::lookup(s))
+            {
+                Some(value) => Ok(value),
+                None => Err(EvalError::UnresolvedSymbol(cur_expr.clone())),
+            },
+            Expression::Literal(value) => return Ok(value.clone()),
+            Expression::If(cond, then_branch, else_branch) => {
+                let cond_value = evaluate_with_env(cond, cur_env.clone(), defs)?;
 
-            Ok(func)
+                cur_expr = match cond_value {
+                    Value::Nil => else_branch.as_ref(),
+                    _ => then_branch.as_ref(),
+                };
+            }
+            Expression::Lambda(param, body) => return Ok(Value::Closure {
+                param: param.clone(),
+                body: body.clone(),
+                env: cur_env.clone(),
+            }),
+            Expression::Application(func_expr, args_exprs) => {
+                let mut func = evaluate_with_env(func_expr, cur_env.clone(), defs)?;
+                let (last_arg_expr, rest_args_exprs) = args_exprs.split_last().ok_or_else(|| {
+                    // TODO: should be a different error for no arguments supplied
+                    EvalError::NotFunction(func.clone())
+                })?;
+
+                for arg_expr in rest_args_exprs {
+                    let arg = evaluate_with_env(arg_expr, cur_env.clone(), defs)?;
+                    func = apply(func, arg, defs)?;
+                }
+
+                // last argument + application evaluation in tail position
+                let last_arg_val = evaluate_with_env(last_arg_expr, cur_env.clone(), defs)?;
+                let (next_body, next_env) = enter_frame(func, last_arg_val, defs)?;
+
+                cur_env = next_env;
+                next_application_body = next_body;
+                cur_expr = &next_application_body;
+            }
+            Expression::Primitive(op) => return builtins::run(*op, &cur_env),
+            Expression::Quote(expr) => return Ok(quote_expr(expr)),
         }
-        Expression::Primitive(op) => builtins::run(*op, &env),
-        Expression::Quote(expr) => Ok(quote_expr(expr)),
     }
 }
 
@@ -99,19 +116,28 @@ pub fn quote_expr(expression: &Expression) -> Value {
     }
 }
 
-pub fn apply(func: Value, arg: Value, defs: &Definitions) -> Result<Value, EvalError> {
+pub fn enter_frame(
+    func: Value,
+    arg: Value,
+    defs: &Definitions
+) -> Result<(Rc<Expression>, Rc<Environment>), EvalError> {
     match func {
         Value::Closure { param, body, env } => {
             let mut frame = Environment::new().with_parent(env);
             frame.set(param.to_string(), arg);
-            evaluate_with_env(&body, Rc::new(frame), defs)
+            Ok((body, Rc::new(frame)))
         }
         Value::Symbol(ref name) => {
             let func = evaluate(&Expression::Symbol(name.clone()), defs)?;
-            apply(func, arg, defs)
+            enter_frame(func, arg, defs)
         }
         _ => Err(EvalError::NotFunction(func)),
     }
+}
+
+pub fn apply(func: Value, arg: Value, defs: &Definitions) -> Result<Value, EvalError> {
+    let (body, env) = enter_frame(func, arg, defs)?;
+    evaluate_with_env(&body, env, defs)
 }
 
 #[cfg(test)]

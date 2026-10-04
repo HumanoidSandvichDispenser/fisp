@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 fisp-evaluator.workspace = true
+fuser = "0.18.0"

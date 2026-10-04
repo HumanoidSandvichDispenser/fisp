@@ -2,22 +2,6 @@ use std::{fmt, rc::Rc};
 
 use crate::{builtins::Op, env::Environment};
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Type {
-    Value,
-    Function(Box<Type>),
-}
-
-impl Type {
-    /// Returns the number of arguments that a function type takes.
-    pub fn arity(&self) -> usize {
-        match self {
-            Type::Value => 0,
-            Type::Function(inner) => 1 + inner.arity(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Value {
     /// The empty list, which is also used to represent the boolean value false.

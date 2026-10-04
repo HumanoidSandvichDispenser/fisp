@@ -1,9 +1,12 @@
-use std::{fmt::{self, Display}, rc::Rc};
+use std::{
+    fmt::{self, Display},
+    rc::Rc,
+};
 
 use crate::{
     env::Environment,
     eval::EvalError,
-    expr::{Expression, Type, Value},
+    expr::{Expression, Value},
 };
 
 const PARAMS: [&str; 2] = ["a", "b"];
@@ -103,14 +106,12 @@ fn curry(params: &[&str], body: Expression) -> Value {
     }
 }
 
-pub fn type_of(name: &str) -> Option<Type> {
-    let arity = match name {
-        "call" => 2,
-        _ => Op::from_name(name)?.arity(),
-    };
-
-    let symbol_type = (0..arity).fold(Type::Value, |acc, _| Type::Function(Box::new(acc)));
-    Some(symbol_type)
+/// Returns how many arguments a builtin takes, or `None` if the name is not a builtin.
+pub fn arity(name: &str) -> Option<usize> {
+    match name {
+        "call" => Some(2),
+        _ => Op::from_name(name).map(Op::arity),
+    }
 }
 
 pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
@@ -176,10 +177,7 @@ fn type_error(expected: &'static str, found: Value) -> EvalError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        defs::{Definition, Definitions},
-        eval::evaluate,
-    };
+    use crate::{defs::Definitions, eval::evaluate};
 
     fn sym(name: &str) -> Expression {
         Expression::Symbol(name.to_owned())
@@ -309,13 +307,7 @@ mod tests {
     #[test]
     fn definition_should_shadow_builtin() {
         let mut defs = Definitions::new();
-        defs.set(
-            "car".to_owned(),
-            Definition {
-                def_type: Type::Value,
-                value: Value::Number(1),
-            },
-        );
+        defs.set("car".to_owned(), Value::Number(1));
 
         let result = evaluate(&sym("car"), &defs);
 

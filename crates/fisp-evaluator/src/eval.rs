@@ -1,5 +1,5 @@
-use std::{iter::once, rc::Rc};
 use std::ops::Deref;
+use std::{iter::once, rc::Rc};
 
 use crate::{
     builtins,
@@ -34,7 +34,7 @@ pub fn evaluate_with_env(
         Expression::String(s) => Ok(Value::String(s.clone())),
         Expression::Symbol(s) => match env
             .get(s)
-            .or_else(|| defs.get(s).map(|def| &def.value))
+            .or_else(|| defs.get(s))
             .cloned()
             .or_else(|| builtins::lookup(s))
         {
@@ -65,9 +65,7 @@ pub fn evaluate_with_env(
             Ok(func)
         }
         Expression::Primitive(op) => builtins::run(*op, &env),
-        Expression::Quote(expr) => {
-            Ok(quote_expr(expr))
-        },
+        Expression::Quote(expr) => Ok(quote_expr(expr)),
     }
 }
 
@@ -76,36 +74,28 @@ pub fn quote_expr(expression: &Expression) -> Value {
         Expression::String(s) => Value::String(s.clone()),
         Expression::Symbol(s) => Value::Symbol(s.clone()),
         Expression::Literal(value) => value.clone(),
-        Expression::If(cond, then_branch, else_branch) => {
-            Value::from(vec![
-                Value::Symbol("if".to_owned()),
-                quote_expr(cond.deref()),
-                quote_expr(then_branch.deref()),
-                quote_expr(else_branch.deref()),
-            ])
-        }
-        Expression::Lambda(param, body) => {
-            Value::from(vec![
-                Value::Symbol("lambda".to_owned()),
-                Value::Symbol(param.to_owned().deref().to_owned()),
-                quote_expr(body),
-            ])
-        }
-        Expression::Application(func_expr, args_exprs) => {
-            args_exprs
-                .iter()
-                .map(quote_expr)
-                .chain(once(quote_expr(func_expr.deref())))
-                .collect::<Vec<_>>()
-                .into()
-        }
+        Expression::If(cond, then_branch, else_branch) => Value::from(vec![
+            Value::Symbol("if".to_owned()),
+            quote_expr(cond.deref()),
+            quote_expr(then_branch.deref()),
+            quote_expr(else_branch.deref()),
+        ]),
+        Expression::Lambda(param, body) => Value::from(vec![
+            Value::Symbol("lambda".to_owned()),
+            Value::Symbol(param.to_owned().deref().to_owned()),
+            quote_expr(body),
+        ]),
+        Expression::Application(func_expr, args_exprs) => args_exprs
+            .iter()
+            .map(quote_expr)
+            .chain(once(quote_expr(func_expr.deref())))
+            .collect::<Vec<_>>()
+            .into(),
         Expression::Primitive(op) => Value::Symbol(op.to_string()),
-        Expression::Quote(expr) => {
-            Value::from(vec![
-                Value::Symbol("quote".to_owned()),
-                quote_expr(expr.deref()),
-            ])
-        },
+        Expression::Quote(expr) => Value::from(vec![
+            Value::Symbol("quote".to_owned()),
+            quote_expr(expr.deref()),
+        ]),
     }
 }
 
@@ -116,6 +106,10 @@ pub fn apply(func: Value, arg: Value, defs: &Definitions) -> Result<Value, EvalE
             frame.set(param.to_string(), arg);
             evaluate_with_env(&body, Rc::new(frame), defs)
         }
+        Value::Symbol(ref name) => {
+            let func = evaluate(&Expression::Symbol(name.clone()), defs)?;
+            apply(func, arg, defs)
+        }
         _ => Err(EvalError::NotFunction(func)),
     }
 }
@@ -125,12 +119,6 @@ mod tests {
     use std::ops::Deref;
 
     use super::*;
-    use crate::{defs::Definition, expr::Type};
-
-    fn def(def_type: Type, value: Value) -> Definition {
-        Definition { def_type, value }
-    }
-
     fn lit(value: impl Into<Value>) -> Expression {
         Expression::Literal(value.into())
     }
@@ -305,7 +293,7 @@ mod tests {
     #[test]
     fn symbol_should_resolve_to_definition() {
         let mut defs = Definitions::new();
-        defs.set("answer".to_owned(), def(Type::Value, Value::Number(42)));
+        defs.set("answer".to_owned(), Value::Number(42));
 
         let result = evaluate(&Expression::Symbol("answer".to_owned()), &defs).unwrap();
 
@@ -315,7 +303,7 @@ mod tests {
     #[test]
     fn parameter_should_shadow_definition() {
         let mut defs = Definitions::new();
-        defs.set("x".to_owned(), def(Type::Value, Value::Number(1)));
+        defs.set("x".to_owned(), Value::Number(1));
 
         let expr = Expression::Application(Box::new(identity()), vec![lit(2)]);
         let result = evaluate(&expr, &defs).unwrap();
@@ -336,14 +324,8 @@ mod tests {
         );
         let f = evaluate(&f_expr, &defs).unwrap();
         let g = evaluate(&identity(), &defs).unwrap();
-        defs.set(
-            "f".to_owned(),
-            def(Type::Function(Box::new(Type::Value)), f),
-        );
-        defs.set(
-            "g".to_owned(),
-            def(Type::Function(Box::new(Type::Value)), g),
-        );
+        defs.set("f".to_owned(), f);
+        defs.set("g".to_owned(), g);
 
         let expr =
             Expression::Application(Box::new(Expression::Symbol("f".to_owned())), vec![lit(7)]);
@@ -355,7 +337,7 @@ mod tests {
     #[test]
     fn removed_definition_should_be_unresolved() {
         let mut defs = Definitions::new();
-        defs.set("answer".to_owned(), def(Type::Value, Value::Number(42)));
+        defs.set("answer".to_owned(), Value::Number(42));
         defs.remove("answer");
 
         let result = evaluate(&Expression::Symbol("answer".to_owned()), &defs);
@@ -398,10 +380,7 @@ mod tests {
             )),
         );
         let fact = evaluate(&fact_expr, &defs).unwrap();
-        defs.set(
-            "fact".to_owned(),
-            def(Type::Function(Box::new(Type::Value)), fact),
-        );
+        defs.set("fact".to_owned(), fact);
 
         let expr = Expression::Application(
             Box::new(Expression::Symbol("fact".to_owned())),

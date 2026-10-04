@@ -1,17 +1,11 @@
 use std::collections::HashMap;
 
-use crate::expr::{Type, Value};
-
-#[derive(Debug, Clone)]
-pub struct Definition {
-    pub def_type: Type,
-    pub value: Value,
-}
+use crate::expr::Value;
 
 /// The global definitions table.
 #[derive(Debug, Default)]
 pub struct Definitions {
-    bindings: HashMap<String, Definition>,
+    bindings: HashMap<String, Value>,
 }
 
 impl Definitions {
@@ -19,15 +13,15 @@ impl Definitions {
         Definitions::default()
     }
 
-    pub fn get(&self, key: &str) -> Option<&Definition> {
+    pub fn get(&self, key: &str) -> Option<&Value> {
         self.bindings.get(key)
     }
 
-    pub fn set(&mut self, key: String, definition: Definition) {
-        self.bindings.insert(key, definition);
+    pub fn set(&mut self, key: String, value: Value) {
+        self.bindings.insert(key, value);
     }
 
-    pub fn remove(&mut self, key: &str) -> Option<Definition> {
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.bindings.remove(key)
     }
 }

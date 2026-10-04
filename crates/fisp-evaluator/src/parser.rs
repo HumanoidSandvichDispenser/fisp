@@ -3,54 +3,59 @@ use std::rc::Rc;
 use crate::{
     builtins,
     defs::Definitions,
-    expr::{Expression, Type, Value},
+    expr::{Expression, Value},
 };
 
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
     Incomplete,
-    Leftover,
-    Unbound,
-    TypeMismatch,
     BadName,
 }
 
 pub enum Token<'a> {
     Atom(Value),
+    /// A name that does not take arguments, written after a prefix (as in `@@f` or `^car`).
     Ref(&'a str),
     Name(&'a str),
+    Apply,
     Lambda,
     If,
     Quote,
 }
 
+/// The parameters in scope, innermost first.
 pub enum Scope<'a> {
     Empty,
-    Binding(&'a str, Type, &'a Scope<'a>),
+    Binding(&'a str, &'a Scope<'a>),
 }
 
 impl Scope<'_> {
-    fn get(&self, name: &str) -> Option<Type> {
+    fn contains(&self, name: &str) -> bool {
         match self {
-            Scope::Empty => None,
-            Scope::Binding(n, t, _) if *n == name => Some(t.clone()),
-            Scope::Binding(_, _, parent) => parent.get(name),
+            Scope::Empty => false,
+            Scope::Binding(n, parent) => *n == name || parent.contains(name),
         }
     }
 }
 
 const RESERVED: [&str; 6] = ["lambda", "λ", "if", "quote", "nil", "t"];
 
-pub fn parse(segments: &[&str], defs: &Definitions) -> Result<(Expression, Type), ParseError> {
+pub fn parse(segments: &[&str], defs: &Definitions) -> Result<Expression, ParseError> {
     let mut tokens = tokenize(segments)
         .collect::<Result<Vec<_>, _>>()?
-        .into_iter();
-    let parsed = parse_expr(&mut tokens, &Scope::Empty, defs)?;
+        .into_iter()
+        .peekable();
+    let head = parse_expr(&mut tokens, &Scope::Empty, defs)?;
 
-    match tokens.next() {
-        None => Ok(parsed),
-        Some(_) => Err(ParseError::Leftover),
-    }
+    let args = std::iter::from_fn(|| {
+        tokens
+            .peek()
+            .is_some()
+            .then(|| parse_expr(&mut tokens, &Scope::Empty, defs))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(application(head, args))
 }
 
 /// Splits a path into tokens, dropping empty and `.` segments.
@@ -59,85 +64,86 @@ pub fn tokenize<'a>(segments: &[&'a str]) -> impl Iterator<Item = Result<Token<'
         .iter()
         .copied()
         .filter(|s| !s.is_empty() && *s != ".")
-        .map(classify)
+        .flat_map(tokenize_segment)
+}
+
+fn tokenize_segment(segment: &str) -> impl Iterator<Item = Result<Token<'_>, ParseError>> {
+    let rest = segment.trim_start_matches(['@', '^']);
+    let prefix = &segment[..segment.len() - rest.len()];
+
+    let marks = prefix.chars().map(|c| match c {
+        '@' => Ok(Token::Apply),
+        _ => Ok(Token::Quote),
+    });
+
+    let token = (!rest.is_empty()).then(|| match classify(rest) {
+        // if the segment is a name, lambda, if, or quote, and it is prefixed with `@` or `^`, treat
+        // it as a reference instead of a name, so that it does not take arguments
+        Ok(Token::Name(_) | Token::Lambda | Token::If | Token::Quote) if !prefix.is_empty() => {
+            Ok(Token::Ref(rest))
+        }
+        token => token,
+    });
+
+    marks.chain(token)
 }
 
 fn parse_expr<'a>(
     tokens: &mut impl Iterator<Item = Token<'a>>,
     scope: &Scope,
     defs: &Definitions,
-) -> Result<(Expression, Type), ParseError> {
+) -> Result<Expression, ParseError> {
     match tokens.next().ok_or(ParseError::Incomplete)? {
-        Token::Atom(value) => Ok((Expression::Literal(value), Type::Value)),
+        Token::Atom(value) => Ok(Expression::Literal(value)),
 
-        Token::Ref(name) => {
-            type_of(name, scope, defs)?;
-            Ok((Expression::Symbol(name.to_owned()), Type::Value))
-        }
+        Token::Ref(name) => Ok(Expression::Symbol(name.to_owned())),
 
         Token::Name(name) => {
-            let arity = type_of(name, scope, defs)?.arity();
+            let arity = arity_of(name, scope, defs);
             let args = (0..arity)
-                .map(|_| parse_value(tokens, scope, defs))
+                .map(|_| parse_expr(tokens, scope, defs))
                 .collect::<Result<Vec<_>, _>>()?;
-            let symbol = Expression::Symbol(name.to_owned());
 
-            let expr = if args.is_empty() {
-                symbol
-            } else {
-                Expression::Application(Box::new(symbol), args)
-            };
+            Ok(application(Expression::Symbol(name.to_owned()), args))
+        }
 
-            Ok((expr, Type::Value))
+        Token::Apply => {
+            let head = parse_expr(tokens, scope, defs)?;
+            let arg = parse_expr(tokens, scope, defs)?;
+
+            Ok(application(head, vec![arg]))
         }
 
         Token::Lambda => {
             let param_name = match tokens.next().ok_or(ParseError::Incomplete)? {
-                Token::Name(name) if !is_function_name(name, defs) => name,
+                Token::Name(name) if builtins::arity(name).is_none() => name,
                 _ => return Err(ParseError::BadName),
             };
 
-            let inner = Scope::Binding(param_name, Type::Value, scope);
-            let (body, lambda_type) = parse_expr(tokens, &inner, defs)?;
+            let body = parse_expr(tokens, &Scope::Binding(param_name, scope), defs)?;
 
-            Ok((
-                Expression::Lambda(param_name.into(), Rc::new(body)),
-                Type::Function(Box::new(lambda_type)),
-            ))
+            Ok(Expression::Lambda(param_name.into(), Rc::new(body)))
         }
 
         Token::If => {
-            let cond = parse_value(tokens, scope, defs)?;
-            let (then_branch, then_type) = parse_expr(tokens, scope, defs)?;
-            let (else_branch, else_type) = parse_expr(tokens, scope, defs)?;
-
-            if then_type != else_type {
-                return Err(ParseError::TypeMismatch);
-            }
-
-            Ok((
-                Expression::If(Box::new(cond), Box::new(then_branch), Box::new(else_branch)),
-                then_type,
-            ))
+            let mut next = || parse_expr(tokens, scope, defs).map(Box::new);
+            Ok(Expression::If(next()?, next()?, next()?))
         }
 
         Token::Quote => {
             // get next expr and wrap it in a literal
             let next = parse_expr(tokens, scope, defs)?;
-            Ok((Expression::Quote(Box::new(next.0)), Type::Value))
+            Ok(Expression::Quote(Box::new(next)))
         }
     }
 }
 
-/// Parses an expression that must not be a function, such as an argument or a condition.
-fn parse_value<'a>(
-    tokens: &mut impl Iterator<Item = Token<'a>>,
-    scope: &Scope,
-    defs: &Definitions,
-) -> Result<Expression, ParseError> {
-    match parse_expr(tokens, scope, defs)? {
-        (expr, Type::Value) => Ok(expr),
-        _ => Err(ParseError::TypeMismatch),
+/// Applies the head to the arguments, or returns the head alone if there are none.
+fn application(head: Expression, args: Vec<Expression>) -> Expression {
+    if args.is_empty() {
+        head
+    } else {
+        Expression::Application(Box::new(head), args)
     }
 }
 
@@ -157,25 +163,8 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
     match segment {
         "lambda" | "λ" => return Ok(Token::Lambda),
         "if" => return Ok(Token::If),
-        "quote" | "^" => return Ok(Token::Quote),
+        "quote" => return Ok(Token::Quote),
         _ => {}
-    }
-
-    if let Some(name) = segment.strip_prefix('@') {
-        return if name.is_empty() {
-            Err(ParseError::BadName)
-        } else {
-            Ok(Token::Ref(name))
-        };
-    }
-
-    // `^` alone quotes the next expression (matched above), and `^name` is just the symbol.
-    if let Some(name) = segment.strip_prefix('^') {
-        return if name.is_empty() {
-            Err(ParseError::BadName)
-        } else {
-            Ok(Token::Atom(Value::Symbol(name.to_owned())))
-        };
     }
 
     if segment.contains(',') {
@@ -211,38 +200,34 @@ fn is_valid_name(segment: &str) -> bool {
         && !RESERVED.contains(&segment)
 }
 
-/// Returns true if the name is a builtin or a definition that takes arguments.
+/// Returns how many arguments the parser consumes after a name.
 ///
-/// Parameters may not shadow these names. Otherwise, the arity of a name would depend on where a
-/// lambda body ends, and a recursive definition could have more than one consistent arity.
-fn is_function_name(name: &str, defs: &Definitions) -> bool {
-    builtins::type_of(name).is_some() || defs.get(name).is_some_and(|def| def.def_type.arity() > 0)
-}
-
-fn type_of(name: &str, scope: &Scope, defs: &Definitions) -> Result<Type, ParseError> {
-    scope
-        .get(name)
-        .or_else(|| defs.get(name).map(|def| def.def_type.clone()))
-        .or_else(|| builtins::type_of(name))
-        .ok_or(ParseError::Unbound)
+/// Only builtins take arguments. Parameters and definitions are values, which are applied with
+/// `@`. Unknown names are also values, looked up when they are evaluated (late binding), so a
+/// definition can refer to one that does not exist yet.
+fn arity_of(name: &str, scope: &Scope, defs: &Definitions) -> usize {
+    if scope.contains(name) || defs.get(name).is_some() {
+        0
+    } else {
+        builtins::arity(name).unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{defs::Definition, eval::evaluate};
+    use crate::eval::{EvalError, evaluate};
 
-    fn fun(ret: Type) -> Type {
-        Type::Function(Box::new(ret))
-    }
-
-    fn parse_path(path: &str, defs: &Definitions) -> Result<(Expression, Type), ParseError> {
+    fn parse_path(path: &str, defs: &Definitions) -> Result<Expression, ParseError> {
         parse(&path.split('/').collect::<Vec<_>>(), defs)
     }
 
+    fn eval_with(path: &str, defs: &Definitions) -> Result<Value, EvalError> {
+        evaluate(&parse_path(path, defs).unwrap(), defs)
+    }
+
     fn run_with(path: &str, defs: &Definitions) -> Value {
-        let (expr, _) = parse_path(path, defs).unwrap();
-        evaluate(&expr, defs).unwrap()
+        eval_with(path, defs).unwrap()
     }
 
     fn run(path: &str) -> Value {
@@ -253,12 +238,14 @@ mod tests {
         parse_path(path, &Definitions::new()).unwrap_err()
     }
 
-    fn type_of_path(path: &str) -> Type {
-        parse_path(path, &Definitions::new()).unwrap().1
-    }
-
     fn list(values: Vec<Value>) -> Value {
         values.into_iter().collect()
+    }
+
+    fn defs_with(name: &str, value: Value) -> Definitions {
+        let mut defs = Definitions::new();
+        defs.set(name.to_owned(), value);
+        defs
     }
 
     #[test]
@@ -294,26 +281,59 @@ mod tests {
         assert_eq!(error("+/1"), ParseError::Incomplete);
         assert_eq!(error("lambda"), ParseError::Incomplete);
         assert_eq!(error("λ/x"), ParseError::Incomplete);
+        assert_eq!(error("@/f"), ParseError::Incomplete);
+        assert_eq!(error("@"), ParseError::Incomplete);
         assert_eq!(error(""), ParseError::Incomplete);
     }
 
     #[test]
-    fn extra_segments_should_be_leftover() {
-        assert_eq!(error("+/1/2/3"), ParseError::Leftover);
+    fn trailing_segments_should_apply_to_result() {
+        assert_eq!(run("λ/x/x/0"), Value::Number(0));
+        assert_eq!(run("λ/x/+/x/1/5"), Value::Number(6));
+        assert_eq!(run("λ/a/λ/b/a/1/2"), Value::Number(1));
     }
 
     #[test]
-    fn lambda_should_have_function_type() {
-        assert_eq!(type_of_path("λ/x/+/x/1"), fun(Type::Value));
-        assert_eq!(
-            type_of_path("lambda/a/lambda/b/+/a/b"),
-            fun(fun(Type::Value))
-        );
+    fn applying_a_non_function_should_fail_at_runtime() {
+        let result = eval_with("+/1/2/3", &Definitions::new());
+
+        assert!(matches!(result, Err(EvalError::NotFunction(_))));
     }
 
     #[test]
-    fn parameter_should_not_be_applied() {
-        assert_eq!(error("λ/f/f/1"), ParseError::Leftover);
+    fn apply_should_take_head_and_argument() {
+        let defs = defs_with("add", run("λ/a/λ/b/+/a/b"));
+
+        assert_eq!(run_with("@/@/add/1/2", &defs), Value::Number(3));
+        assert_eq!(run_with("@@add/1/2", &defs), Value::Number(3));
+        assert_eq!(run_with("@@/add/1/2", &defs), Value::Number(3));
+        assert_eq!(run_with("@/@add/1/2", &defs), Value::Number(3));
+    }
+
+    #[test]
+    fn prefixed_builtin_should_not_take_arguments() {
+        assert_eq!(run("@@+/1/2"), Value::Number(3));
+        assert_eq!(run("show/@car/1,2"), Value::String("1".to_owned()));
+        assert_eq!(error("@/+/1/2"), ParseError::Incomplete);
+    }
+
+    #[test]
+    fn lambda_should_be_passable_as_argument() {
+        assert_eq!(run("@/λ/x/*/x/x/7"), Value::Number(49));
+        assert_eq!(run("call/λ/x/*/x/x/7"), Value::Number(49));
+    }
+
+    #[test]
+    fn if_should_return_functions() {
+        assert_eq!(run("if/t/λ/x/x/λ/y/1/5"), Value::Number(5));
+        assert_eq!(run("if/t/1/λ/x/x"), Value::Number(1));
+    }
+
+    #[test]
+    fn parameter_should_not_take_arguments() {
+        // The 1 is applied to the lambda, not to f.
+        assert_eq!(run("λ/f/f/1"), Value::Number(1));
+        assert_eq!(run("λ/f/@f/1/λ/x/+/x/1"), Value::Number(2));
     }
 
     #[test]
@@ -326,43 +346,17 @@ mod tests {
     }
 
     #[test]
-    fn parameter_should_not_shadow_function_definition() {
-        let mut defs = Definitions::new();
-        defs.set(
-            "g".to_owned(),
-            Definition {
-                def_type: fun(Type::Value),
-                value: Value::Nil,
-            },
-        );
-        defs.set(
-            "c".to_owned(),
-            Definition {
-                def_type: Type::Value,
-                value: Value::Number(1),
-            },
-        );
+    fn parameter_should_shadow_definition() {
+        let defs = defs_with("g", Value::Number(1));
 
-        assert_eq!(parse_path("λ/g/g", &defs).unwrap_err(), ParseError::BadName);
-        assert_eq!(parse_path("λ/c/c", &defs).unwrap().1, fun(Type::Value));
+        assert_eq!(run_with("λ/g/g/5", &defs), Value::Number(5));
     }
 
     #[test]
-    fn reference_should_not_be_applied() {
-        assert_eq!(type_of_path("@car"), Type::Value);
-        assert_eq!(run("call/call/@+/1/2"), Value::Number(3));
-    }
-
-    #[test]
-    fn if_branches_should_have_same_type() {
-        assert_eq!(run("if/nil/1/2"), Value::Number(2));
-        assert_eq!(type_of_path("if/t/1/@car"), Type::Value);
-        assert_eq!(error("if/t/1/λ/x/x"), ParseError::TypeMismatch);
-    }
-
-    #[test]
-    fn function_typed_argument_should_be_rejected() {
-        assert_eq!(error("+/λ/x/x/1"), ParseError::TypeMismatch);
+    fn symbol_should_be_applied_as_global_function() {
+        assert_eq!(run("@^car/1,2"), Value::Number(1));
+        assert_eq!(run("λ/f/@f/1,2/^cdr"), list(vec![2.into()]));
+        assert_eq!(run("call/call/^+/1/2"), Value::Number(3));
     }
 
     #[test]
@@ -370,11 +364,14 @@ mod tests {
         let expected = Value::Cons(
             Box::new(Value::Symbol("car".to_owned())),
             Box::new(Value::Cons(
-                Box::new(Value::Symbol("cdr".to_owned())),
                 Box::new(Value::Cons(
-                    Box::new(Value::Symbol("x".to_owned())),
-                    Box::new(Value::Nil),
+                    Box::new(Value::Symbol("cdr".to_owned())),
+                    Box::new(Value::Cons(
+                        Box::new(Value::Symbol("x".to_owned())),
+                        Box::new(Value::Nil),
+                    )),
                 )),
+                Box::new(Value::Nil),
             )),
         );
 
@@ -384,12 +381,28 @@ mod tests {
     #[test]
     fn quote_should_take_next_symbol() {
         assert_eq!(run("^car"), Value::Symbol("car".to_owned()));
+        assert_eq!(run("^if"), Value::Symbol("if".to_owned()));
+        assert_eq!(run("^5"), Value::Number(5));
     }
 
     #[test]
-    fn unknown_name_should_be_unbound() {
-        assert_eq!(error("foo"), ParseError::Unbound);
-        assert_eq!(error("@foo"), ParseError::Unbound);
+    fn quoted_apply_prefix_should_match_separate_segments() {
+        assert_eq!(run("^@@f/x/y"), run("^/@/@/f/x/y"));
+        assert_eq!(run("^/@car/@cdr/x"), run("^/car/cdr/x"));
+    }
+
+    #[test]
+    fn unknown_name_should_fail_at_runtime() {
+        let defs = Definitions::new();
+
+        assert!(matches!(
+            eval_with("foo", &defs),
+            Err(EvalError::UnresolvedSymbol(_))
+        ));
+        assert!(matches!(
+            eval_with("@foo/1", &defs),
+            Err(EvalError::UnresolvedSymbol(_))
+        ));
     }
 
     #[test]
@@ -402,26 +415,10 @@ mod tests {
     #[test]
     fn recursive_definition_should_parse_and_run() {
         let mut defs = Definitions::new();
-        let source = "lambda/n/if/=/n/0/1/*/n/fact/-/n/1";
+        let source = "lambda/n/if/=/n/0/1/*/n/@fact/-/n/1";
 
-        defs.set(
-            "fact".to_owned(),
-            Definition {
-                def_type: fun(Type::Value),
-                value: Value::Nil,
-            },
-        );
-        let (expr, ty) = parse_path(source, &defs).unwrap();
-        assert_eq!(ty, fun(Type::Value));
-
-        let value = evaluate(&expr, &defs).unwrap();
-        defs.set(
-            "fact".to_owned(),
-            Definition {
-                def_type: ty,
-                value,
-            },
-        );
+        let value = run_with(source, &defs);
+        defs.set("fact".to_owned(), value);
 
         assert_eq!(run_with("fact/5", &defs), Value::Number(120));
     }

@@ -21,7 +21,7 @@ pub enum Token<'a> {
     Name(&'a str),
     Lambda,
     If,
-    Quote(bool),
+    Quote,
 }
 
 pub enum Scope<'a> {
@@ -42,26 +42,32 @@ impl Scope<'_> {
 const RESERVED: [&str; 6] = ["lambda", "λ", "if", "quote", "nil", "t"];
 
 pub fn parse(segments: &[&str], defs: &Definitions) -> Result<(Expression, Type), ParseError> {
-    let mut segments = segments
-        .iter()
-        .copied()
-        .filter(|s| !s.is_empty() && *s != ".");
-    let parsed = parse_expr(&mut segments, &Scope::Empty, defs)?;
+    let mut tokens = tokenize(segments)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter();
+    let parsed = parse_expr(&mut tokens, &Scope::Empty, defs)?;
 
-    match segments.next() {
+    match tokens.next() {
         None => Ok(parsed),
         Some(_) => Err(ParseError::Leftover),
     }
 }
 
+/// Splits a path into tokens, dropping empty and `.` segments.
+pub fn tokenize<'a>(segments: &[&'a str]) -> impl Iterator<Item = Result<Token<'a>, ParseError>> {
+    segments
+        .iter()
+        .copied()
+        .filter(|s| !s.is_empty() && *s != ".")
+        .map(classify)
+}
+
 fn parse_expr<'a>(
-    segments: &mut impl Iterator<Item = &'a str>,
+    tokens: &mut impl Iterator<Item = Token<'a>>,
     scope: &Scope,
     defs: &Definitions,
 ) -> Result<(Expression, Type), ParseError> {
-    let segment = segments.next().ok_or(ParseError::Incomplete)?;
-
-    match classify(segment)? {
+    match tokens.next().ok_or(ParseError::Incomplete)? {
         Token::Atom(value) => Ok((Expression::Literal(value), Type::Value)),
 
         Token::Ref(name) => {
@@ -72,7 +78,7 @@ fn parse_expr<'a>(
         Token::Name(name) => {
             let arity = type_of(name, scope, defs)?.arity();
             let args = (0..arity)
-                .map(|_| parse_value(segments, scope, defs))
+                .map(|_| parse_value(tokens, scope, defs))
                 .collect::<Result<Vec<_>, _>>()?;
             let symbol = Expression::Symbol(name.to_owned());
 
@@ -86,14 +92,13 @@ fn parse_expr<'a>(
         }
 
         Token::Lambda => {
-            let param_name = segments.next().ok_or(ParseError::Incomplete)?;
-
-            if !is_valid_name(param_name) || is_function_name(param_name, defs) {
-                return Err(ParseError::BadName);
-            }
+            let param_name = match tokens.next().ok_or(ParseError::Incomplete)? {
+                Token::Name(name) if !is_function_name(name, defs) => name,
+                _ => return Err(ParseError::BadName),
+            };
 
             let inner = Scope::Binding(param_name, Type::Value, scope);
-            let (body, lambda_type) = parse_expr(segments, &inner, defs)?;
+            let (body, lambda_type) = parse_expr(tokens, &inner, defs)?;
 
             Ok((
                 Expression::Lambda(param_name.into(), Rc::new(body)),
@@ -102,9 +107,9 @@ fn parse_expr<'a>(
         }
 
         Token::If => {
-            let cond = parse_value(segments, scope, defs)?;
-            let (then_branch, then_type) = parse_expr(segments, scope, defs)?;
-            let (else_branch, else_type) = parse_expr(segments, scope, defs)?;
+            let cond = parse_value(tokens, scope, defs)?;
+            let (then_branch, then_type) = parse_expr(tokens, scope, defs)?;
+            let (else_branch, else_type) = parse_expr(tokens, scope, defs)?;
 
             if then_type != else_type {
                 return Err(ParseError::TypeMismatch);
@@ -116,28 +121,21 @@ fn parse_expr<'a>(
             ))
         }
 
-        Token::Quote(symbol_only) => {
+        Token::Quote => {
             // get next expr and wrap it in a literal
-
-            if symbol_only {
-                let next = segments.next().ok_or(ParseError::Incomplete)?;
-                let symbol = Expression::Symbol(next.to_owned());
-                Ok((Expression::Quote(Box::new(symbol)), Type::Value))
-            } else {
-                let next = parse_expr(segments, scope, defs)?;
-                Ok((Expression::Quote(Box::new(next.0)), Type::Value))
-            }
-        },
+            let next = parse_expr(tokens, scope, defs)?;
+            Ok((Expression::Quote(Box::new(next.0)), Type::Value))
+        }
     }
 }
 
 /// Parses an expression that must not be a function, such as an argument or a condition.
 fn parse_value<'a>(
-    segments: &mut impl Iterator<Item = &'a str>,
+    tokens: &mut impl Iterator<Item = Token<'a>>,
     scope: &Scope,
     defs: &Definitions,
 ) -> Result<Expression, ParseError> {
-    match parse_expr(segments, scope, defs)? {
+    match parse_expr(tokens, scope, defs)? {
         (expr, Type::Value) => Ok(expr),
         _ => Err(ParseError::TypeMismatch),
     }
@@ -159,7 +157,7 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
     match segment {
         "lambda" | "λ" => return Ok(Token::Lambda),
         "if" => return Ok(Token::If),
-        "quote" => return Ok(Token::Quote(false)),
+        "quote" | "^" => return Ok(Token::Quote),
         _ => {}
     }
 
@@ -171,7 +169,8 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
         };
     }
 
-    if let Some(name) = segment.strip_prefix('\'') {
+    // `^` alone quotes the next expression (matched above), and `^name` is just the symbol.
+    if let Some(name) = segment.strip_prefix('^') {
         return if name.is_empty() {
             Err(ParseError::BadName)
         } else {
@@ -206,7 +205,7 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
 /// reserved character (like filepaths), is not a number, and is not a reserved name.
 fn is_valid_name(segment: &str) -> bool {
     !segment.is_empty()
-        && !segment.starts_with(['.', '\'', '@', '"'])
+        && !segment.starts_with(['.', '\'', '@', '^', '"'])
         && !segment.contains([',', '/', ':'])
         && segment.parse::<i64>().is_err()
         && !RESERVED.contains(&segment)
@@ -268,7 +267,7 @@ mod tests {
         assert_eq!(run("-5"), Value::Number(-5));
         assert_eq!(run("nil"), Value::Nil);
         assert_eq!(run("t"), Value::True);
-        assert_eq!(run("'abc"), Value::Symbol("abc".to_owned()));
+        assert_eq!(run("^abc"), Value::Symbol("abc".to_owned()));
         assert_eq!(run("\"hi\""), Value::String("hi".to_owned()));
     }
 
@@ -322,6 +321,8 @@ mod tests {
         assert_eq!(error("λ/1/1"), ParseError::BadName);
         assert_eq!(error("λ/if/1"), ParseError::BadName);
         assert_eq!(error("λ/car/1"), ParseError::BadName);
+        assert_eq!(error("λ/^x/1"), ParseError::BadName);
+        assert_eq!(error("λ/@x/1"), ParseError::BadName);
     }
 
     #[test]
@@ -382,11 +383,7 @@ mod tests {
 
     #[test]
     fn quote_should_take_next_symbol() {
-        let expected = list(vec![
-            Value::Symbol("car".to_owned()),
-        ]);
-
-        assert_eq!(run("^car"), expected);
+        assert_eq!(run("^car"), Value::Symbol("car".to_owned()));
     }
 
     #[test]

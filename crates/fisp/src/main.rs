@@ -2,6 +2,7 @@ use std::{env, io};
 
 use fuser::Config;
 
+pub mod evaluator;
 pub mod filesystem;
 
 fn main() -> io::Result<()> {
@@ -18,7 +19,7 @@ fn main() -> io::Result<()> {
 
     let config = Config::default();
 
-    fuser::mount(filesystem::FispFilesystem {}, &mountpoint, &config)?;
+    fuser::mount(filesystem::FispFilesystem::new(), &mountpoint, &config)?;
 
     Ok(())
 }

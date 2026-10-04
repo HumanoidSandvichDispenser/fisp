@@ -43,6 +43,10 @@ impl Runtime {
         let ast = parser::parse(&source, &self.defs).map_err(RuntimeError::ParseError)?;
         eval::evaluate(&ast, &self.defs).map_err(RuntimeError::EvalError)
     }
+
+    pub fn source(&self, name: &str) -> Option<String> {
+        self.defs.get(name).map(|value| value.to_string())
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{fmt::{self, Display}, rc::Rc};
 
 use crate::{
     env::Environment,
@@ -52,6 +52,28 @@ impl Op {
             Op::Car | Op::Cdr | Op::Atom | Op::Show => 1,
             _ => 2,
         }
+    }
+}
+
+impl Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Op::Add => "+",
+            Op::Sub => "-",
+            Op::Mul => "*",
+            Op::Div => "div",
+            Op::Mod => "mod",
+            Op::NumEq => "=",
+            Op::Lt => "<",
+            Op::Gt => ">",
+            Op::Car => "car",
+            Op::Cdr => "cdr",
+            Op::Cons => "cons",
+            Op::Atom => "atom",
+            Op::Eq => "eq",
+            Op::Show => "show",
+        };
+        write!(f, "{name}")
     }
 }
 

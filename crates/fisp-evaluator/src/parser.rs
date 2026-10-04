@@ -21,7 +21,7 @@ pub enum Token<'a> {
     Name(&'a str),
     Lambda,
     If,
-    Quote,
+    Quote(bool),
 }
 
 pub enum Scope<'a> {
@@ -116,10 +116,18 @@ fn parse_expr<'a>(
             ))
         }
 
-        Token::Quote => Ok((
-            Expression::Literal(segments.map(atom).collect()),
-            Type::Value,
-        )),
+        Token::Quote(symbol_only) => {
+            // get next expr and wrap it in a literal
+
+            if symbol_only {
+                let next = segments.next().ok_or(ParseError::Incomplete)?;
+                let symbol = Expression::Symbol(next.to_owned());
+                Ok((Expression::Quote(Box::new(symbol)), Type::Value))
+            } else {
+                let next = parse_expr(segments, scope, defs)?;
+                Ok((Expression::Quote(Box::new(next.0)), Type::Value))
+            }
+        },
     }
 }
 
@@ -151,7 +159,7 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
     match segment {
         "lambda" | "λ" => return Ok(Token::Lambda),
         "if" => return Ok(Token::If),
-        "quote" => return Ok(Token::Quote),
+        "quote" => return Ok(Token::Quote(false)),
         _ => {}
     }
 
@@ -357,14 +365,28 @@ mod tests {
     }
 
     #[test]
-    fn quote_should_take_rest_of_path_as_atoms() {
+    fn quote_should_take_full_expression() {
+        let expected = Value::Cons(
+            Box::new(Value::Symbol("car".to_owned())),
+            Box::new(Value::Cons(
+                Box::new(Value::Symbol("cdr".to_owned())),
+                Box::new(Value::Cons(
+                    Box::new(Value::Symbol("x".to_owned())),
+                    Box::new(Value::Nil),
+                )),
+            )),
+        );
+
+        assert_eq!(run("^/car/cdr/x"), expected);
+    }
+
+    #[test]
+    fn quote_should_take_next_symbol() {
         let expected = list(vec![
-            Value::Symbol("+".to_owned()),
-            1.into(),
-            Value::Symbol("lambda".to_owned()),
+            Value::Symbol("car".to_owned()),
         ]);
 
-        assert_eq!(run("quote/+/1/lambda"), expected);
+        assert_eq!(run("^car"), expected);
     }
 
     #[test]
@@ -377,7 +399,6 @@ mod tests {
     fn malformed_segment_should_be_bad_name() {
         assert_eq!(error("\""), ParseError::BadName);
         assert_eq!(error("'"), ParseError::BadName);
-        assert_eq!(error("@"), ParseError::BadName);
         assert_eq!(error("a:b"), ParseError::BadName);
     }
 

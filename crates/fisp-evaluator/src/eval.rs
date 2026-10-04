@@ -1,4 +1,5 @@
-use std::rc::Rc;
+use std::{iter::once, rc::Rc};
+use std::ops::Deref;
 
 use crate::{
     builtins,
@@ -64,6 +65,47 @@ pub fn evaluate_with_env(
             Ok(func)
         }
         Expression::Primitive(op) => builtins::run(*op, &env),
+        Expression::Quote(expr) => {
+            Ok(quote_expr(expr))
+        },
+    }
+}
+
+pub fn quote_expr(expression: &Expression) -> Value {
+    match expression {
+        Expression::String(s) => Value::String(s.clone()),
+        Expression::Symbol(s) => Value::Symbol(s.clone()),
+        Expression::Literal(value) => value.clone(),
+        Expression::If(cond, then_branch, else_branch) => {
+            Value::from(vec![
+                Value::Symbol("if".to_owned()),
+                quote_expr(cond.deref()),
+                quote_expr(then_branch.deref()),
+                quote_expr(else_branch.deref()),
+            ])
+        }
+        Expression::Lambda(param, body) => {
+            Value::from(vec![
+                Value::Symbol("lambda".to_owned()),
+                Value::Symbol(param.to_owned().deref().to_owned()),
+                quote_expr(body),
+            ])
+        }
+        Expression::Application(func_expr, args_exprs) => {
+            args_exprs
+                .iter()
+                .map(quote_expr)
+                .chain(once(quote_expr(func_expr.deref())))
+                .collect::<Vec<_>>()
+                .into()
+        }
+        Expression::Primitive(op) => Value::Symbol(op.to_string()),
+        Expression::Quote(expr) => {
+            Value::from(vec![
+                Value::Symbol("quote".to_owned()),
+                quote_expr(expr.deref()),
+            ])
+        },
     }
 }
 

@@ -134,6 +134,14 @@ impl From<bool> for Value {
     }
 }
 
+impl From<Vec<Value>> for Value {
+    fn from(vec: Vec<Value>) -> Self {
+        vec.iter().fold(Value::Nil, |tail, head| {
+            Value::Cons(Box::new(head.clone()), Box::new(tail))
+        })
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     String(String),
@@ -142,6 +150,7 @@ pub enum Expression {
     If(Box<Expression>, Box<Expression>, Box<Expression>),
     Lambda(Rc<str>, Rc<Expression>),
     Application(Box<Expression>, Vec<Expression>),
+    Quote(Box<Expression>),
     /// Body of a built-in closure.
     Primitive(Op),
 }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     builtins,
     defs::Definitions,
@@ -15,12 +17,15 @@ pub enum RuntimeError {
 
 pub struct Runtime {
     defs: Definitions,
+    /// The source each definition was evaluated from, by name.
+    sources: HashMap<String, String>,
 }
 
 impl Runtime {
     pub fn new() -> Self {
         Runtime {
             defs: Definitions::new(),
+            sources: HashMap::new(),
         }
     }
 
@@ -33,8 +38,28 @@ impl Runtime {
 
         let value = self.evaluate(source)?;
         self.defs.set(name.to_string(), value);
+        self.sources.insert(name.to_string(), source.to_string());
 
         Ok(())
+    }
+
+    pub fn undefine(&mut self, name: &str) -> Result<(), RuntimeError> {
+        if builtins::arity(name).is_some() {
+            return Err(RuntimeError::DefinitionError(format!(
+                "{name} is a builtin"
+            )));
+        }
+
+        self.defs.remove(name);
+        self.sources.remove(name);
+
+        Ok(())
+    }
+
+    pub fn definitions(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.defs
+            .bindings
+            .iter()
     }
 
     pub fn evaluate(&self, source: &str) -> Result<Value, RuntimeError> {
@@ -45,7 +70,7 @@ impl Runtime {
     }
 
     pub fn source(&self, name: &str) -> Option<String> {
-        self.defs.get(name).map(|value| value.to_string())
+        self.sources.get(name).cloned()
     }
 }
 

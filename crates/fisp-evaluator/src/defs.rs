@@ -5,7 +5,7 @@ use crate::expr::Value;
 /// The global definitions table.
 #[derive(Debug, Default)]
 pub struct Definitions {
-    bindings: HashMap<String, Value>,
+    pub(crate) bindings: HashMap<String, Value>,
 }
 
 impl Definitions {

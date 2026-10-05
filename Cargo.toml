@@ -5,6 +5,10 @@ members = ["crates/*"]
 [workspace.package]
 version = "1.0.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A filesystem-based Lisp esolang using filepaths as code and data."
+readme = "README.md"
+repository = "https://github.com/HumanoidSandvichDispenser/fisp"
 
 [workspace.dependencies]
-fisp-evaluator = { path = "crates/fisp-evaluator" }
+fisp-evaluator = { path = "crates/fisp-evaluator", version = "1.0.0" }

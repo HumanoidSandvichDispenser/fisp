@@ -57,9 +57,7 @@ impl Runtime {
     }
 
     pub fn definitions(&self) -> impl Iterator<Item = (&String, &Value)> {
-        self.defs
-            .bindings
-            .iter()
+        self.defs.bindings.iter()
     }
 
     pub fn evaluate(&self, source: &str) -> Result<Value, RuntimeError> {

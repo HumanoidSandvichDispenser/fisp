@@ -120,9 +120,7 @@ impl From<bool> for Value {
 
 impl From<Vec<Value>> for Value {
     fn from(vec: Vec<Value>) -> Self {
-        vec.iter().fold(Value::Nil, |tail, head| {
-            Value::Cons(Box::new(head.clone()), Box::new(tail))
-        })
+        vec.into_iter().collect()
     }
 }
 

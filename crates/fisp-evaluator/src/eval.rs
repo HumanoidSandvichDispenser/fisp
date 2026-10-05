@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::{iter::once, rc::Rc};
 
 use crate::{
-    builtins,
+    builtins::{self, Op},
     defs::Definitions,
     env::Environment,
     expr::{Expression, Value},
@@ -18,6 +18,8 @@ pub enum EvalError {
     },
     DivisionByZero,
     Overflow,
+    /// A value passed to `eval` that is not valid code.
+    Malformed(Value),
 }
 
 pub fn evaluate(expression: &Expression, defs: &Definitions) -> Result<Value, EvalError> {
@@ -37,15 +39,17 @@ pub fn evaluate_with_env(
     loop {
         match cur_expr {
             Expression::String(s) => return Ok(Value::String(s.clone())),
-            Expression::Symbol(s) => return match cur_env
-                .get(s)
-                .or_else(|| defs.get(s))
-                .cloned()
-                .or_else(|| builtins::lookup(s))
-            {
-                Some(value) => Ok(value),
-                None => Err(EvalError::UnresolvedSymbol(cur_expr.clone())),
-            },
+            Expression::Symbol(s) => {
+                return match cur_env
+                    .get(s)
+                    .or_else(|| defs.get(s))
+                    .cloned()
+                    .or_else(|| builtins::lookup(s))
+                {
+                    Some(value) => Ok(value),
+                    None => Err(EvalError::UnresolvedSymbol(cur_expr.clone())),
+                };
+            }
             Expression::Literal(value) => return Ok(value.clone()),
             Expression::If(cond, then_branch, else_branch) => {
                 let cond_value = evaluate_with_env(cond, cur_env.clone(), defs)?;
@@ -55,17 +59,20 @@ pub fn evaluate_with_env(
                     _ => then_branch.as_ref(),
                 };
             }
-            Expression::Lambda(param, body) => return Ok(Value::Closure {
-                param: param.clone(),
-                body: body.clone(),
-                env: cur_env.clone(),
-            }),
+            Expression::Lambda(param, body) => {
+                return Ok(Value::Closure {
+                    param: param.clone(),
+                    body: body.clone(),
+                    env: cur_env.clone(),
+                });
+            }
             Expression::Application(func_expr, args_exprs) => {
                 let mut func = evaluate_with_env(func_expr, cur_env.clone(), defs)?;
-                let (last_arg_expr, rest_args_exprs) = args_exprs.split_last().ok_or_else(|| {
-                    // TODO: should be a different error for no arguments supplied
-                    EvalError::NotFunction(func.clone())
-                })?;
+                let (last_arg_expr, rest_args_exprs) =
+                    args_exprs.split_last().ok_or_else(|| {
+                        // TODO: should be a different error for no arguments supplied
+                        EvalError::NotFunction(func.clone())
+                    })?;
 
                 for arg_expr in rest_args_exprs {
                     let arg = evaluate_with_env(arg_expr, cur_env.clone(), defs)?;
@@ -79,6 +86,13 @@ pub fn evaluate_with_env(
                 cur_env = next_env;
                 next_application_body = next_body;
                 cur_expr = &next_application_body;
+            }
+            Expression::Primitive(Op::Eval) => {
+                let code = builtins::param(&cur_env, 0)?;
+
+                next_application_body = Rc::new(unquote(&code)?);
+                cur_expr = &next_application_body;
+                cur_env = Rc::new(Environment::new());
             }
             Expression::Primitive(op) => return builtins::run(*op, &cur_env),
             Expression::Quote(expr) => return Ok(quote_expr(expr)),
@@ -102,12 +116,9 @@ pub fn quote_expr(expression: &Expression) -> Value {
             Value::Symbol(param.to_owned().deref().to_owned()),
             quote_expr(body),
         ]),
-        Expression::Application(func_expr, args_exprs) => args_exprs
-            .iter()
-            .map(quote_expr)
-            .chain(once(quote_expr(func_expr.deref())))
-            .collect::<Vec<_>>()
-            .into(),
+        Expression::Application(func_expr, args_exprs) => once(quote_expr(func_expr.deref()))
+            .chain(args_exprs.iter().map(quote_expr))
+            .collect(),
         Expression::Primitive(op) => Value::Symbol(op.to_string()),
         Expression::Quote(expr) => Value::from(vec![
             Value::Symbol("quote".to_owned()),
@@ -116,10 +127,61 @@ pub fn quote_expr(expression: &Expression) -> Value {
     }
 }
 
+/// Turns quoted code back into an expression.
+pub fn unquote(value: &Value) -> Result<Expression, EvalError> {
+    let malformed = || EvalError::Malformed(value.clone());
+
+    let items = match value {
+        Value::Symbol(s) => return Ok(Expression::Symbol(s.clone())),
+        Value::Cons(..) => list_items(value).ok_or_else(malformed)?,
+        _ => return Ok(Expression::Literal(value.clone())),
+    };
+
+    let boxed = |value| unquote(value).map(Box::new);
+
+    match items.as_slice() {
+        [Value::Symbol(s), cond, then_branch, else_branch] if s == "if" => Ok(Expression::If(
+            boxed(cond)?,
+            boxed(then_branch)?,
+            boxed(else_branch)?,
+        )),
+        [Value::Symbol(s), Value::Symbol(param), body] if s == "lambda" || s == "λ" => Ok(
+            Expression::Lambda(param.as_str().into(), Rc::new(unquote(body)?)),
+        ),
+        [Value::Symbol(s), expr] if s == "quote" => Ok(Expression::Quote(boxed(expr)?)),
+        [Value::Symbol(s), ..] if ["if", "lambda", "λ", "quote"].contains(&s.as_str()) => {
+            Err(malformed())
+        }
+        [head] => unquote(head),
+        [head, args @ ..] => Ok(Expression::Application(
+            boxed(head)?,
+            args.iter()
+                .map(|arg| unquote(arg))
+                .collect::<Result<_, _>>()?,
+        )),
+        [] => unreachable!("a cons has at least one item"),
+    }
+}
+
+/// Collects the items of a proper list, or `None` if the list is improper.
+fn list_items(mut value: &Value) -> Option<Vec<&Value>> {
+    let mut items = Vec::new();
+    loop {
+        match value {
+            Value::Nil => return Some(items),
+            Value::Cons(car, cdr) => {
+                items.push(car.as_ref());
+                value = cdr;
+            }
+            _ => return None,
+        }
+    }
+}
+
 pub fn enter_frame(
     func: Value,
     arg: Value,
-    defs: &Definitions
+    defs: &Definitions,
 ) -> Result<(Rc<Expression>, Rc<Environment>), EvalError> {
     match func {
         Value::Closure { param, body, env } => {

@@ -392,6 +392,30 @@ mod tests {
     }
 
     #[test]
+    fn quote_should_keep_argument_order() {
+        assert_eq!(run("show/^/+/1/2").to_string(), "(+ 1 2)");
+        assert_eq!(run("show/^/if/t/1/2").to_string(), "(if t 1 2)");
+        assert_eq!(run("show/^/λ/x/x").to_string(), "(lambda x x)");
+    }
+
+    #[test]
+    fn eval_should_run_quoted_code() {
+        assert_eq!(run("eval/^/+/1/2"), Value::Number(3));
+        assert_eq!(run("eval/^/if/nil/1/2"), Value::Number(2));
+        assert_eq!(run("eval/^/@/λ/x/*/x/x/7"), Value::Number(49));
+        assert_eq!(run("eval/^/^car"), Value::Symbol("car".to_owned()));
+        assert_eq!(run("eval/cons/^+/1,2"), Value::Number(3));
+    }
+
+    #[test]
+    fn eval_should_not_see_its_callers_bindings() {
+        assert!(matches!(
+            eval_with("λ/x/eval/^x/1", &Definitions::new()),
+            Err(EvalError::UnresolvedSymbol(_))
+        ));
+    }
+
+    #[test]
     fn unknown_name_should_fail_at_runtime() {
         let defs = Definitions::new();
 

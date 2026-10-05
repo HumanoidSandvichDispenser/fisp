@@ -27,6 +27,7 @@ pub enum Op {
     Atom,
     Eq,
     Show,
+    Eval,
 }
 
 impl Op {
@@ -46,13 +47,14 @@ impl Op {
             "atom" => Some(Op::Atom),
             "eq" => Some(Op::Eq),
             "show" => Some(Op::Show),
+            "eval" => Some(Op::Eval),
             _ => None,
         }
     }
 
     pub fn arity(self) -> usize {
         match self {
-            Op::Car | Op::Cdr | Op::Atom | Op::Show => 1,
+            Op::Car | Op::Cdr | Op::Atom | Op::Show | Op::Eval => 1,
             _ => 2,
         }
     }
@@ -75,6 +77,7 @@ impl Display for Op {
             Op::Atom => "atom",
             Op::Eq => "eq",
             Op::Show => "show",
+            Op::Eval => "eval",
         };
         write!(f, "{name}")
     }
@@ -114,12 +117,15 @@ pub fn arity(name: &str) -> Option<usize> {
     }
 }
 
+/// Gets a builtin's `i`th argument from its frame.
+pub(crate) fn param(env: &Environment, i: usize) -> Result<Value, EvalError> {
+    env.get(PARAMS[i])
+        .cloned()
+        .ok_or_else(|| EvalError::UnresolvedSymbol(Expression::Symbol(PARAMS[i].to_owned())))
+}
+
 pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
-    let arg = |i: usize| {
-        env.get(PARAMS[i])
-            .cloned()
-            .ok_or_else(|| EvalError::UnresolvedSymbol(Expression::Symbol(PARAMS[i].to_owned())))
-    };
+    let arg = |i: usize| param(env, i);
 
     match op {
         Op::Add => arithmetic(arg(0)?, arg(1)?, i64::checked_add),
@@ -142,6 +148,8 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
         Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
         Op::Show => Ok(Value::String(arg(0)?.to_string())),
+        // handled by the evaluator so the code runs in tail position
+        Op::Eval => unreachable!("eval should not be ran directly"),
     }
 }
 

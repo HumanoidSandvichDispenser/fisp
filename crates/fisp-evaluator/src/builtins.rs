@@ -29,6 +29,7 @@ pub enum Op {
     Show,
     Eval,
     Explode,
+    Implode,
 }
 
 impl Op {
@@ -50,13 +51,14 @@ impl Op {
             "show" => Some(Op::Show),
             "eval" => Some(Op::Eval),
             "explode" => Some(Op::Explode),
+            "implode" => Some(Op::Implode),
             _ => None,
         }
     }
 
     pub fn arity(self) -> usize {
         match self {
-            Op::Car | Op::Cdr | Op::Atom | Op::Show | Op::Eval => 1,
+            Op::Car | Op::Cdr | Op::Atom | Op::Show | Op::Eval | Op::Explode | Op::Implode => 1,
             _ => 2,
         }
     }
@@ -81,6 +83,7 @@ impl Display for Op {
             Op::Show => "show",
             Op::Eval => "eval",
             Op::Explode => "explode",
+            Op::Implode => "implode",
         };
         write!(f, "{name}")
     }
@@ -153,6 +156,38 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Show => Ok(Value::String(arg(0)?.to_string())),
         // handled by the evaluator so the code runs in tail position
         Op::Eval => unreachable!("eval should not be ran directly"),
+        Op::Explode => {
+            let value = arg(0)?;
+            if let Value::String(s) = value {
+                let mut list = Value::Nil;
+                for c in s.chars().rev() {
+                    list = Value::Cons(Box::new(Value::String(c.to_string())), Box::new(list));
+                }
+                Ok(list)
+            } else {
+                Err(type_error("string", value))
+            }
+        }
+        Op::Implode => {
+            let value = arg(0)?;
+            let mut s = String::new();
+            let mut current = &value;
+
+            while let Value::Cons(car, cdr) = current {
+                if let Value::String(c) = &**car {
+                    s.push_str(c);
+                } else {
+                    return Err(type_error("string", *car.clone()));
+                }
+                current = cdr;
+            }
+
+            if !matches!(current, Value::Nil) {
+                return Err(type_error("list", current.clone()));
+            }
+
+            Ok(Value::String(s))
+        }
     }
 }
 
@@ -323,5 +358,41 @@ mod tests {
         let result = evaluate(&sym("car"), &defs);
 
         assert_eq!(result.unwrap(), Value::Number(1));
+    }
+
+    #[test]
+    fn explode_should_convert_string_to_list() {
+        let result = eval(app(sym("explode"), vec![lit("abc")]));
+
+        let expected = app(
+            sym("cons"),
+            vec![
+                lit("a"),
+                app(
+                    sym("cons"),
+                    vec![lit("b"), app(sym("cons"), vec![lit("c"), lit(Value::Nil)])],
+                ),
+            ],
+        );
+
+        assert_eq!(result.unwrap(), eval(expected).unwrap());
+    }
+
+    #[test]
+    fn implode_should_convert_list_to_string() {
+        let list = app(
+            sym("cons"),
+            vec![
+                lit("a"),
+                app(
+                    sym("cons"),
+                    vec![lit("b"), app(sym("cons"), vec![lit("c"), lit(Value::Nil)])],
+                ),
+            ],
+        );
+
+        let result = eval(app(sym("implode"), vec![list]));
+
+        assert_eq!(result.unwrap(), Value::String("abc".to_owned()));
     }
 }

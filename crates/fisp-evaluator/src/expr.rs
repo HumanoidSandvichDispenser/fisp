@@ -54,7 +54,8 @@ impl fmt::Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::True => write!(f, "t"),
             Value::Number(n) => write!(f, "{n}"),
-            Value::String(s) | Value::Symbol(s) => write!(f, "{s}"),
+            Value::Symbol(s) => write!(f, "{s}"),
+            Value::String(s) => write!(f, "\"{s}\""),
             Value::Cons(car, cdr) => {
                 write!(f, "({car}")?;
                 let mut rest = cdr.as_ref();

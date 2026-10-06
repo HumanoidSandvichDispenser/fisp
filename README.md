@@ -9,6 +9,7 @@ This Lisp implements:
 - the `+`, `-`, `mul`/`*`, `div`, `mod` arithmetic functions
 - the `=`, `<`, `>` comparison functions
 - `if`, `lambda`/`λ`, `call`/`@`, and `quote`/`^` special forms.
+- `implode`, `explode` string functions
 
 ## Syntax
 

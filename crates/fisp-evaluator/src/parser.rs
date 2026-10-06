@@ -10,6 +10,8 @@ use crate::{
 pub enum ParseError {
     Incomplete,
     BadName,
+    StringNotTerminated,
+    StringDecodeError
 }
 
 pub enum Token<'a> {
@@ -172,10 +174,22 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
         return Ok(Token::Atom(list.collect()));
     }
 
-    if segment.len() >= 2 && segment.starts_with('"') && segment.ends_with('"') {
-        // TODO: escape sequences
-        let string_content = &segment[1..segment.len() - 1];
-        return Ok(Token::Atom(Value::String(string_content.to_owned())));
+    if segment.starts_with(':') {
+        let mut segment = segment;
+        eat(&mut segment, ':');
+        let content = decode_string(consume_until(&mut segment, '\0'))?;
+        return Ok(Token::Atom(Value::String(content)));
+    }
+
+    if segment.len() >= 2 && segment.starts_with('"') {
+        let mut segment = segment;
+        eat(&mut segment, '"');
+        let content = decode_string(consume_until(&mut segment, '"'))?;
+        return if eat(&mut segment, '"') && segment.is_empty() {
+            Ok(Token::Atom(Value::String(content)))
+        } else {
+            Err(ParseError::StringNotTerminated)
+        };
     }
 
     if is_valid_name(segment) {
@@ -186,6 +200,60 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
         Value::Symbol(_) => Err(ParseError::BadName),
         value => Ok(Token::Atom(value)),
     }
+}
+
+// TODO: refactor lexer into separate file
+fn decode_string(string: &str) -> Result<String, ParseError> {
+    let mut result = String::new();
+    let mut chars = string.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('"') => result.push('"'),
+                Some('\\') => result.push('\\'),
+                Some(other) => {
+                    return Err(ParseError::StringDecodeError);
+                }
+                None => {
+                    return Err(ParseError::StringDecodeError);
+                }
+            }
+        } else if c == '%' {
+            // percent-encoded character
+            let hex_digits: String = chars.by_ref().take(2).collect();
+            if hex_digits.len() != 2 {
+                return Err(ParseError::StringDecodeError);
+            }
+
+            let escaped_char = u8::from_str_radix(&hex_digits, 16)
+                .map_err(|_| ParseError::StringDecodeError)?;
+            result.push(escaped_char as char);
+        } else {
+            result.push(c);
+        }
+    }
+
+    Ok(result)
+}
+
+fn eat(input: &mut &str, c: char) -> bool {
+    match input.strip_prefix(c) {
+        Some(rest) => {
+            *input = rest;
+            true
+        }
+        None => false,
+    }
+}
+
+fn consume_until<'a>(input: &mut &'a str, c: char) -> &'a str {
+    let pos = input.find(c).unwrap_or(input.len());
+    let (token, rest) = input.split_at(pos);
+    *input = rest;
+    token
 }
 
 /// Returns true if the segment is a valid name for a parameter or reference.
@@ -445,5 +513,28 @@ mod tests {
         defs.set("fact".to_owned(), value);
 
         assert_eq!(run_with("fact/5", &defs), Value::Number(120));
+    }
+
+    #[test]
+    fn string_should_decode_escape_sequences() {
+        assert_eq!(run(":hello\\nworld"), Value::String("hello\nworld".to_owned()));
+        assert_eq!(run(":tab\\tcharacter"), Value::String("tab\tcharacter".to_owned()));
+        assert_eq!(run(":quote\\\"test\\\""), Value::String("quote\"test\"".to_owned()));
+        assert_eq!(run(":backslash\\\\test"), Value::String("backslash\\test".to_owned()));
+        assert_eq!(run(":percent%20encoded"), Value::String("percent encoded".to_owned()));
+    }
+
+    #[test]
+    fn string_decode_should_fail_on_invalid_sequences() {
+        assert_eq!(error(":invalid\\escape"), ParseError::StringDecodeError);
+        assert_eq!(error(":incomplete\\"), ParseError::StringDecodeError);
+        assert_eq!(error(":percent%2"), ParseError::StringDecodeError);
+        assert_eq!(error(":percent%ZZ"), ParseError::StringDecodeError);
+    }
+
+    #[test]
+    fn string_not_terminated_should_error() {
+        assert_eq!(error("\"unterminated"), ParseError::StringNotTerminated);
+        assert_eq!(error("\"extra char\" "), ParseError::StringNotTerminated);
     }
 }

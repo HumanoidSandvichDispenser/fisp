@@ -28,6 +28,7 @@ pub enum Op {
     Eq,
     Show,
     Eval,
+    Explode,
 }
 
 impl Op {
@@ -48,6 +49,7 @@ impl Op {
             "eq" => Some(Op::Eq),
             "show" => Some(Op::Show),
             "eval" => Some(Op::Eval),
+            "explode" => Some(Op::Explode),
             _ => None,
         }
     }
@@ -78,6 +80,7 @@ impl Display for Op {
             Op::Eq => "eq",
             Op::Show => "show",
             Op::Eval => "eval",
+            Op::Explode => "explode",
         };
         write!(f, "{name}")
     }

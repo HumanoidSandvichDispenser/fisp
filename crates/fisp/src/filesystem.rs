@@ -171,6 +171,8 @@ impl FispFilesystem {
                 Ok(Value::Closure { .. }) => Ok(Kind::Dir),
                 Ok(value) => Ok(Kind::File(format!("{}\n", value))),
                 Err(RuntimeError::ParseError(ParseError::BadName)) => Err(Errno::ENOENT),
+                Err(RuntimeError::ParseError(ParseError::StringNotTerminated)) => Err(Errno::ENOENT),
+                Err(RuntimeError::ParseError(ParseError::StringDecodeError)) => Err(Errno::EILSEQ),
                 Err(RuntimeError::ParseError(ParseError::Incomplete)) => Ok(Kind::Dir),
                 Err(RuntimeError::EvalError(EvalError::UnresolvedSymbol(_))) => Err(Errno::ENOENT),
                 Err(RuntimeError::EvalError(_)) => Err(Errno::EIO),

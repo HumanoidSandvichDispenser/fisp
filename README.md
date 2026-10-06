@@ -8,7 +8,8 @@ This Lisp implements:
 - `atom`, `eq`, `car`, `cdr`, `cons` primitive functions
 - the `+`, `-`, `mul`/`*`, `div`, `mod` arithmetic functions
 - the `=`, `<`, `>` comparison functions
-- `if`, `lambda`/`λ`, `call`/`@`, and `quote`/`^` special forms.
+- `if`, `lambda`/`λ`, `call`/`@`, `eval`, and `quote`/`^` special forms.
+- `show` debugging function
 - `implode`, `explode` string functions
 
 ## Syntax
@@ -72,4 +73,13 @@ ln -s 'λ/n/λ/a/λ/b/if/=/n/0/a/@@@fibi/-/n/1/b/+/a/b' fibi
 ln -s 'λ/n/@@@fibi/n/0/1' fastfib
 cat fastfib/20
 # => 6765
+```
+
+This program implements `append` and `string-append` functions:
+
+```sh
+ln -s lambda/list1/lambda/list2/if/eq/list1/nil/list2/cons/car/list1/@@append/cdr/list1/list2 append
+ln -s lambda/str1/lambda/str2/implode/@@append/explode/str1/explode/str2 string-append
+cat @@string-append/:hello%20/:world
+# => "hello world"
 ```

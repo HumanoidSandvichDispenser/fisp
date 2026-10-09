@@ -157,14 +157,14 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Lt => comparison(arg(0)?, arg(1)?, |a, b| a < b),
         Op::Gt => comparison(arg(0)?, arg(1)?, |a, b| a > b),
         Op::Car => match arg(0)? {
-            Value::Cons(car, _) => Ok(*car),
+            Value::Cons(car, _) => Ok(Rc::unwrap_or_clone(car)),
             value => Err(type_error("cons", value)),
         },
         Op::Cdr => match arg(0)? {
-            Value::Cons(_, cdr) => Ok(*cdr),
+            Value::Cons(_, cdr) => Ok(Rc::unwrap_or_clone(cdr)),
             value => Err(type_error("cons", value)),
         },
-        Op::Cons => Ok(Value::Cons(Box::new(arg(0)?), Box::new(arg(1)?))),
+        Op::Cons => Ok(Value::Cons(Rc::new(arg(0)?), Rc::new(arg(1)?))),
         Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
         Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
         Op::Show => Ok(Value::String(arg(0)?.path_expr().to_string())),
@@ -177,7 +177,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
             if let Value::String(s) = value {
                 let mut list = Value::Nil;
                 for c in s.chars().rev() {
-                    list = Value::Cons(Box::new(Value::String(c.to_string())), Box::new(list));
+                    list = Value::Cons(Rc::new(Value::String(c.to_string())), Rc::new(list));
                 }
                 Ok(list)
             } else {
@@ -193,7 +193,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
                 if let Value::String(c) = &**car {
                     s.push_str(c);
                 } else {
-                    return Err(type_error("string", *car.clone()));
+                    return Err(type_error("string", (**car).clone()));
                 }
                 current = cdr;
             }

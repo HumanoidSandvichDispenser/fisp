@@ -24,7 +24,7 @@ pub enum Value {
     Symbol(String),
 
     /// A cons cell in a linked list.
-    Cons(Box<Value>, Box<Value>),
+    Cons(Rc<Value>, Rc<Value>),
 
     /// A closure that captures its environment.
     Closure {
@@ -281,7 +281,7 @@ impl FromIterator<Value> for Value {
     fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
         let items: Vec<Value> = iter.into_iter().collect();
         items.into_iter().rev().fold(Value::Nil, |tail, head| {
-            Value::Cons(Box::new(head), Box::new(tail))
+            Value::Cons(Rc::new(head), Rc::new(tail))
         })
     }
 }

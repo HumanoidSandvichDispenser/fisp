@@ -433,16 +433,16 @@ mod tests {
     #[test]
     fn quote_should_take_full_expression() {
         let expected = Value::Cons(
-            Box::new(Value::Symbol("car".to_owned())),
-            Box::new(Value::Cons(
-                Box::new(Value::Cons(
-                    Box::new(Value::Symbol("cdr".to_owned())),
-                    Box::new(Value::Cons(
-                        Box::new(Value::Symbol("x".to_owned())),
-                        Box::new(Value::Nil),
+            Rc::new(Value::Symbol("car".to_owned())),
+            Rc::new(Value::Cons(
+                Rc::new(Value::Cons(
+                    Rc::new(Value::Symbol("cdr".to_owned())),
+                    Rc::new(Value::Cons(
+                        Rc::new(Value::Symbol("x".to_owned())),
+                        Rc::new(Value::Nil),
                     )),
                 )),
-                Box::new(Value::Nil),
+                Rc::new(Value::Nil),
             )),
         );
 

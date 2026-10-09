@@ -233,7 +233,7 @@ mod tests {
     }
 
     fn cons_v(a: Value, b: Value) -> Value {
-        Value::Cons(Box::new(a), Box::new(b))
+        Value::Cons(Rc::new(a), Rc::new(b))
     }
 
     fn cons_e(a: Expression, b: Expression) -> Expression {

@@ -463,9 +463,9 @@ mod tests {
 
     #[test]
     fn quote_should_keep_argument_order() {
-        assert_eq!(run("show/^/+/1/2").to_string(), "(+ 1 2)");
-        assert_eq!(run("show/^/if/t/1/2").to_string(), "(if t 1 2)");
-        assert_eq!(run("show/^/λ/x/x").to_string(), "(lambda x x)");
+        assert_eq!(run("show/^/+/1/2"), Value::from("(+ 1 2)"));
+        assert_eq!(run("show/^/if/t/1/2"), Value::from("(if t 1 2)"));
+        assert_eq!(run("show/^/λ/x/x"), Value::from("(lambda x x)"));
     }
 
     #[test]

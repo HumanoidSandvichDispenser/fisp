@@ -48,25 +48,49 @@ impl PartialEq for Value {
     }
 }
 
-impl fmt::Display for Value {
+impl Value {
+    /// Returns an s-expression representation of the value, e.g. `(1 2 3)`.
+    pub fn sexp(&self) -> Sexp<'_> {
+        Sexp(self)
+    }
+}
+
+/// Displays a value as an s-expression. Created by [`Value::sexp`].
+pub struct Sexp<'a>(&'a Value);
+
+impl fmt::Display for Sexp<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
+        match self.0 {
             Value::Nil => write!(f, "nil"),
             Value::True => write!(f, "t"),
             Value::Number(n) => write!(f, "{n}"),
-            Value::Symbol(s) | Value::String(s) => write!(f, "{s}"),
+            Value::Symbol(s) => write!(f, "{s}"),
+            Value::String(s) => {
+                write!(f, "\"")?;
+                for c in s.chars() {
+                    match c {
+                        '\\' => write!(f, "\\\\")?,
+                        '"' => write!(f, "\\\"")?,
+                        '\n' => write!(f, "\\n")?,
+                        '\r' => write!(f, "\\r")?,
+                        '\t' => write!(f, "\\t")?,
+                        _ => write!(f, "{c}")?,
+                    }
+                }
+                write!(f, "\"")
+            },
             Value::Cons(car, cdr) => {
-                write!(f, "({car}")?;
+                write!(f, "({}", car.sexp())?;
                 let mut rest = cdr.as_ref();
                 loop {
                     match rest {
                         Value::Nil => break,
                         Value::Cons(car, cdr) => {
-                            write!(f, " {car}")?;
+                            write!(f, " {}", car.sexp())?;
                             rest = cdr;
                         }
                         other => {
-                            write!(f, " . {other}")?;
+                            write!(f, " . {}", other.sexp())?;
                             break;
                         }
                     }

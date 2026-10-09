@@ -204,10 +204,10 @@ mod tests {
             runtime.define(name, source).unwrap();
         }
 
-        let show = |source| runtime.evaluate(source).unwrap().to_string();
+        let show = |source| runtime.evaluate(source).unwrap().sexp().to_string();
 
         assert_eq!(show("preorder/λ/x/mul/x/10/tree"), "(10 20 40 50 30)");
-        assert_eq!(show("preorder/^show/tree"), "(1 2 4 5 3)");
+        assert_eq!(show("preorder/^show/tree"), r#"("1" "2" "4" "5" "3")"#);
         assert_eq!(show("preorder/λ/x/x/nil"), "nil");
     }
 }

@@ -153,7 +153,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Cons => Ok(Value::Cons(Box::new(arg(0)?), Box::new(arg(1)?))),
         Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
         Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
-        Op::Show => Ok(Value::String(arg(0)?.to_string())),
+        Op::Show => Ok(Value::String(arg(0)?.sexp().to_string())),
         // handled by the evaluator so the code runs in tail position
         Op::Eval => unreachable!("eval should not be ran directly"),
         Op::Explode => {

@@ -263,7 +263,7 @@ fn consume_until<'a>(input: &mut &'a str, c: char) -> &'a str {
 ///
 /// A name is valid if it is not empty, does not start with a reserved character, does not contain a
 /// reserved character (like filepaths), is not a number, and is not a reserved name.
-fn is_valid_name(segment: &str) -> bool {
+pub(crate) fn is_valid_name(segment: &str) -> bool {
     !segment.is_empty()
         && !segment.starts_with(['.', '\'', '@', '^', '"'])
         && !segment.contains([',', '/', ':'])

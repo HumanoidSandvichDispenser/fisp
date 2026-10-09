@@ -9,7 +9,7 @@ use crate::{
     expr::{Expression, Value},
 };
 
-const PARAMS: [&str; 2] = ["a", "b"];
+pub(crate) const PARAMS: [&str; 2] = ["a", "b"];
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Op {

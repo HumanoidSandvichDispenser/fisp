@@ -64,7 +64,7 @@ pub fn parse(segments: &[&str], defs: &Definitions) -> Result<Expression, ParseE
 pub fn tokenize<'a>(segments: &[&'a str]) -> impl Iterator<Item = Result<Token<'a>, ParseError>> {
     segments
         .iter()
-        .copied()
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != ".")
         .flat_map(tokenize_segment)
 }

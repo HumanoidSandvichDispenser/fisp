@@ -27,6 +27,7 @@ pub enum Op {
     Atom,
     Eq,
     Show,
+    Sexp,
     Eval,
     Explode,
     Implode,
@@ -49,6 +50,7 @@ impl Op {
             "atom" => Some(Op::Atom),
             "eq" => Some(Op::Eq),
             "show" => Some(Op::Show),
+            "sexp" => Some(Op::Sexp),
             "eval" => Some(Op::Eval),
             "explode" => Some(Op::Explode),
             "implode" => Some(Op::Implode),
@@ -58,7 +60,14 @@ impl Op {
 
     pub fn arity(self) -> usize {
         match self {
-            Op::Car | Op::Cdr | Op::Atom | Op::Show | Op::Eval | Op::Explode | Op::Implode => 1,
+            Op::Car
+            | Op::Cdr
+            | Op::Atom
+            | Op::Show
+            | Op::Sexp
+            | Op::Eval
+            | Op::Explode
+            | Op::Implode => 1,
             _ => 2,
         }
     }
@@ -81,6 +90,7 @@ impl Display for Op {
             Op::Atom => "atom",
             Op::Eq => "eq",
             Op::Show => "show",
+            Op::Sexp => "sexp",
             Op::Eval => "eval",
             Op::Explode => "explode",
             Op::Implode => "implode",
@@ -154,6 +164,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
         Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
         Op::Show => Ok(Value::String(arg(0)?.path_expr().to_string())),
+        Op::Sexp => Ok(Value::String(arg(0)?.sexp().to_string())),
         // handled by the evaluator so the code runs in tail position
         Op::Eval => unreachable!("eval should not be ran directly"),
         Op::Explode => {
@@ -348,6 +359,22 @@ mod tests {
 
         assert_eq!(show(list), Value::String("1,2".to_owned()));
         assert_eq!(show(pair), Value::String("cons/1/2".to_owned()));
+    }
+
+    #[test]
+    fn sexp_should_print_lisp_syntax() {
+        let nested = app(
+            sym("cons"),
+            vec![
+                app(sym("cons"), vec![lit(1), lit(Value::Nil)]),
+                app(sym("cons"), vec![lit("x"), lit(Value::Nil)]),
+            ],
+        );
+        let pair = app(sym("cons"), vec![lit(1), lit(2)]);
+        let sexp = |expr| eval(app(sym("sexp"), vec![expr])).unwrap();
+
+        assert_eq!(sexp(nested), Value::String(r#"((1) "x")"#.to_owned()));
+        assert_eq!(sexp(pair), Value::String("(1 . 2)".to_owned()));
     }
 
     #[test]

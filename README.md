@@ -9,7 +9,7 @@ This Lisp implements:
 - the `+`, `-`, `mul`/`*`, `div`, `mod` arithmetic functions
 - the `=`, `<`, `>` comparison functions
 - `if`, `lambda`/`λ`, `call`/`@`, `eval`, and `quote`/`^` special forms.
-- `show` debugging function
+- `show` and `sexp` printing functions
 - `implode`, `explode` string functions
 
 ## Syntax
@@ -56,6 +56,26 @@ cat @add-my-number/7
 # => 9
 ```
 
+### Printing
+
+Reading a path prints its value as a path expression, which evaluates back to
+the same value. Instead, a top-level string is printed as its raw text instead,
+without a trailing newline. `show` returns the path expression of any value as
+a string, and `sexp` returns its S-expression Lisp syntax.
+
+```sh
+cat cons/1,2/cons/:x/nil
+# => cons/1,2/cons/:x/nil
+cat :hello%20world
+# => hello world
+cat show/:hello%20world
+# => :hello%20world
+cat sexp/cons/1,2/cons/:x/nil
+# => ((1 2) "x")
+cat sexp/:hello%20world
+# => "hello world"
+```
+
 ## Example Programs
 
 This program (naively) calculates the factorial of a number:
@@ -81,5 +101,5 @@ This program implements `append` and `string-append` functions:
 ln -s lambda/list1/lambda/list2/if/eq/list1/nil/list2/cons/car/list1/@@append/cdr/list1/list2 append
 ln -s lambda/str1/lambda/str2/implode/@@append/explode/str1/explode/str2 string-append
 cat @@string-append/:hello%20/:world
-# => "hello world"
+# => hello world
 ```

@@ -212,6 +212,7 @@ fn decode_string(string: &str) -> Result<String, ParseError> {
             '\\' => match chars.next() {
                 Some('n') => '\n',
                 Some('t') => '\t',
+                Some('r') => '\r',
                 Some('"') => '"',
                 Some('\\') => '\\',
                 _ => {
@@ -526,6 +527,10 @@ mod tests {
         assert_eq!(
             run(":tab\\tcharacter"),
             Value::String("tab\tcharacter".to_owned())
+        );
+        assert_eq!(
+            run(":carriage\\rreturn"),
+            Value::String("carriage\rreturn".to_owned())
         );
         assert_eq!(
             run(":quote\\\"test\\\""),

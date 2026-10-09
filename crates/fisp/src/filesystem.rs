@@ -86,10 +86,17 @@ impl Table {
     }
 }
 
+enum SessionState {
+    Done(Vec<u8>),
+    Collecting(Vec<u8>),
+}
+
 pub struct FispFilesystem {
     evaluator: Evaluator,
     table: Mutex<Table>,
     revision: AtomicU64,
+    next_fh: AtomicU64,
+    sessions: Mutex<HashMap<FileHandle, SessionState>>,
     uid: u32,
     gid: u32,
 }
@@ -103,8 +110,10 @@ impl FispFilesystem {
             evaluator: Evaluator::spawn().unwrap(),
             table: Mutex::new(Table::new()),
             revision: AtomicU64::new(0),
+            next_fh: AtomicU64::new(0),
             uid,
             gid,
+            sessions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -172,7 +181,9 @@ impl FispFilesystem {
                 Ok(Value::String(s)) => Ok(Kind::File(s)),
                 Ok(value) => Ok(Kind::File(format!("{}\n", value.path_expr()))),
                 Err(RuntimeError::ParseError(ParseError::BadName)) => Err(Errno::ENOENT),
-                Err(RuntimeError::ParseError(ParseError::StringNotTerminated)) => Err(Errno::ENOENT),
+                Err(RuntimeError::ParseError(ParseError::StringNotTerminated)) => {
+                    Err(Errno::ENOENT)
+                }
                 Err(RuntimeError::ParseError(ParseError::StringDecodeError)) => Err(Errno::EILSEQ),
                 Err(RuntimeError::ParseError(ParseError::Incomplete)) => Ok(Kind::Dir),
                 Err(RuntimeError::EvalError(EvalError::UnresolvedSymbol(_))) => Err(Errno::ENOENT),
@@ -261,19 +272,18 @@ impl Filesystem for FispFilesystem {
         lock_owner: Option<fuser::LockOwner>,
         reply: fuser::ReplyData,
     ) {
-        match self.kind(ino) {
-            Ok(Kind::File(content)) => {
-                let data = content.as_bytes();
-                let end = std::cmp::min(offset as usize + size as usize, data.len());
-                let slice = &data[offset as usize..end];
+        let sessions = self.sessions.lock().unwrap();
+        match sessions.get(&fh) {
+            Some(SessionState::Done(content)) => {
+                let start = (offset as usize).min(content.len());
+                let end = (start + size as usize).min(content.len());
+                let slice = &content[start..end];
                 reply.data(slice);
             }
-            Ok(_) => {
-                reply.error(Errno::EISDIR);
+            Some(SessionState::Collecting(_)) => {
+                todo!()
             }
-            Err(errno) => {
-                reply.error(errno);
-            }
+            None => reply.error(Errno::EBADF)
         }
     }
 
@@ -426,13 +436,41 @@ impl Filesystem for FispFilesystem {
     fn open(
         &self,
         _req: &fuser::Request,
-        _ino: INodeNo,
+        ino: INodeNo,
         flags: fuser::OpenFlags,
         reply: fuser::ReplyOpen,
     ) {
-        match flags.acc_mode() {
-            OpenAccMode::O_RDONLY => reply.opened(FileHandle(0), FopenFlags::empty()),
-            OpenAccMode::O_WRONLY | OpenAccMode::O_RDWR => reply.error(Errno::EACCES),
+        let fh = FileHandle(self.next_fh.fetch_add(1, Ordering::Relaxed));
+        let session = match self.kind(ino) {
+            Ok(Kind::File(content)) => SessionState::Done(content.into_bytes()),
+            Ok(Kind::Dir) => return reply.error(Errno::EISDIR),
+            Ok(Kind::Symlink(_)) => return reply.error(Errno::ELOOP),
+            Err(errno) => return reply.error(errno),
+        };
+
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(fh, session);
         }
+
+        reply.opened(fh, FopenFlags::FOPEN_DIRECT_IO);
+    }
+
+    fn release(
+        &self,
+        _req: &fuser::Request,
+        _ino: INodeNo,
+        _fh: FileHandle,
+        _flags: OpenFlags,
+        _lock_owner: Option<fuser::LockOwner>,
+        _flush: bool,
+        reply: fuser::ReplyEmpty,
+    ) {
+        // remove the session for the file handle
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.remove(&_fh);
+        }
+        reply.ok();
     }
 }

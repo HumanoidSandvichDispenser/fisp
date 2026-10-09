@@ -1,6 +1,7 @@
 use std::ops::Deref;
 use std::{iter::once, rc::Rc};
 
+use crate::parser;
 use crate::{
     builtins::{self, Op},
     defs::Definitions,
@@ -20,6 +21,7 @@ pub enum EvalError {
     Overflow,
     /// A value passed to `eval` that is not valid code.
     Malformed(Value),
+    ParseError(crate::parser::ParseError),
 }
 
 pub fn evaluate(expression: &Expression, defs: &Definitions) -> Result<Value, EvalError> {
@@ -93,6 +95,22 @@ pub fn evaluate_with_env(
                 next_application_body = Rc::new(unquote(&code)?);
                 cur_expr = &next_application_body;
                 cur_env = Rc::new(Environment::new());
+            }
+            Expression::Primitive(Op::Read) => {
+                let source = match builtins::param(&cur_env, 0)? {
+                    Value::String(s) => s,
+                    other => {
+                        return Err(EvalError::Type {
+                            expected: "string",
+                            found: other,
+                        });
+                    }
+                };
+
+                let segments: Vec<&str> = source.split("/").collect();
+                let expr = parser::parse(&segments, defs).map_err(EvalError::ParseError);
+
+                return Ok(quote_expr(&expr?));
             }
             Expression::Primitive(op) => return builtins::run(*op, &cur_env),
             Expression::Quote(expr) => return Ok(quote_expr(expr)),

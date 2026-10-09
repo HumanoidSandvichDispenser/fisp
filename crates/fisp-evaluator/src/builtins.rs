@@ -29,6 +29,7 @@ pub enum Op {
     Show,
     Sexp,
     Eval,
+    Read,
     Explode,
     Implode,
 }
@@ -52,6 +53,7 @@ impl Op {
             "show" => Some(Op::Show),
             "sexp" => Some(Op::Sexp),
             "eval" => Some(Op::Eval),
+            "read" => Some(Op::Read),
             "explode" => Some(Op::Explode),
             "implode" => Some(Op::Implode),
             _ => None,
@@ -66,6 +68,7 @@ impl Op {
             | Op::Show
             | Op::Sexp
             | Op::Eval
+            | Op::Read
             | Op::Explode
             | Op::Implode => 1,
             _ => 2,
@@ -92,6 +95,7 @@ impl Display for Op {
             Op::Show => "show",
             Op::Sexp => "sexp",
             Op::Eval => "eval",
+            Op::Read => "read",
             Op::Explode => "explode",
             Op::Implode => "implode",
         };
@@ -167,6 +171,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Sexp => Ok(Value::String(arg(0)?.sexp().to_string())),
         // handled by the evaluator so the code runs in tail position
         Op::Eval => unreachable!("eval should not be ran directly"),
+        Op::Read => unreachable!("read should not be ran directly"),
         Op::Explode => {
             let value = arg(0)?;
             if let Value::String(s) = value {
@@ -421,5 +426,25 @@ mod tests {
         let result = eval(app(sym("implode"), vec![list]));
 
         assert_eq!(result.unwrap(), Value::String("abc".to_owned()));
+    }
+
+    #[test]
+    fn read_should_parse_string_to_quoted_expression() {
+        let str = lit(r#"cons/1/cons/2/cons/3/nil"#);
+
+        let result = eval(app(sym("read"), vec![str]));
+
+        let expected = Expression::Quote(Box::new(app(
+            sym("cons"),
+            vec![
+                lit(1),
+                app(
+                    sym("cons"),
+                    vec![lit(2), app(sym("cons"), vec![lit(3), lit(Value::Nil)])],
+                ),
+            ],
+        )));
+
+        assert_eq!(result.unwrap(), eval(expected).unwrap());
     }
 }

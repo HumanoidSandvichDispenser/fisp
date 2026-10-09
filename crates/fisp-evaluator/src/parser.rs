@@ -479,6 +479,18 @@ mod tests {
     }
 
     #[test]
+    fn eval_should_keep_quoted_list_literals() {
+        assert_eq!(run("eval/^/car/1,2"), Value::Number(1));
+        assert_eq!(run("eval/^/1,2"), run("1,2"));
+        assert_eq!(run("eval/^/cons/1,2/3,4"), run("cons/1,2/3,4"));
+    }
+
+    #[test]
+    fn quote_should_wrap_list_literals() {
+        assert_eq!(run("sexp/^/car/1,2"), Value::from("(car (quote (1 2)))"));
+    }
+
+    #[test]
     fn eval_should_not_see_its_callers_bindings() {
         assert!(matches!(
             eval_with("λ/x/eval/^x/1", &Definitions::new()),

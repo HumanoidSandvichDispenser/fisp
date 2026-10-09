@@ -104,6 +104,9 @@ pub fn quote_expr(expression: &Expression) -> Value {
     match expression {
         Expression::String(s) => Value::String(s.clone()),
         Expression::Symbol(s) => Value::Symbol(s.clone()),
+        Expression::Literal(value @ (Value::Cons(..) | Value::Symbol(_))) => {
+            Value::from(vec![Value::Symbol("quote".to_owned()), value.clone()])
+        }
         Expression::Literal(value) => value.clone(),
         Expression::If(cond, then_branch, else_branch) => Value::from(vec![
             Value::Symbol("if".to_owned()),

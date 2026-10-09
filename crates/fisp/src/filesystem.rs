@@ -169,7 +169,7 @@ impl FispFilesystem {
         } else {
             match rt.evaluate(&path.join("/")) {
                 Ok(Value::Closure { .. }) => Ok(Kind::Dir),
-                Ok(value) => Ok(Kind::File(format!("{}\n", value.sexp()))),
+                Ok(value) => Ok(Kind::File(format!("{}\n", value.path_expr()))),
                 Err(RuntimeError::ParseError(ParseError::BadName)) => Err(Errno::ENOENT),
                 Err(RuntimeError::ParseError(ParseError::StringNotTerminated)) => Err(Errno::ENOENT),
                 Err(RuntimeError::ParseError(ParseError::StringDecodeError)) => Err(Errno::EILSEQ),

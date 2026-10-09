@@ -153,7 +153,7 @@ pub fn run(op: Op, env: &Environment) -> Result<Value, EvalError> {
         Op::Cons => Ok(Value::Cons(Box::new(arg(0)?), Box::new(arg(1)?))),
         Op::Atom => Ok(Value::from(!matches!(arg(0)?, Value::Cons(..)))),
         Op::Eq => Ok(Value::from(arg(0)? == arg(1)?)),
-        Op::Show => Ok(Value::String(arg(0)?.sexp().to_string())),
+        Op::Show => Ok(Value::String(arg(0)?.path_expr().to_string())),
         // handled by the evaluator so the code runs in tail position
         Op::Eval => unreachable!("eval should not be ran directly"),
         Op::Explode => {
@@ -264,7 +264,7 @@ mod tests {
     fn partial_builtin_should_print_as_closure() {
         let inc = app(sym("+"), vec![lit(1)]);
 
-        assert_eq!(show(inc), Value::String("#<lambda b>".to_owned()));
+        assert_eq!(show(inc), Value::String("λ/b/@@+/1/b".to_owned()));
     }
 
     #[test]
@@ -346,8 +346,8 @@ mod tests {
         );
         let pair = app(sym("cons"), vec![lit(1), lit(2)]);
 
-        assert_eq!(show(list), Value::String("(1 2)".to_owned()));
-        assert_eq!(show(pair), Value::String("(1 . 2)".to_owned()));
+        assert_eq!(show(list), Value::String("1,2".to_owned()));
+        assert_eq!(show(pair), Value::String("cons/1/2".to_owned()));
     }
 
     #[test]

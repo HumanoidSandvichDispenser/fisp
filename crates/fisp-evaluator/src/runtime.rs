@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     builtins,
     defs::Definitions,
+    env::Environment,
     eval::{self, EvalError},
-    expr::Value,
+    expr::{Expression, Value},
     parser::{self, ParseError},
 };
 
@@ -15,6 +16,7 @@ pub enum RuntimeError {
     EvalError(EvalError),
 }
 
+#[derive(Debug)]
 pub struct Runtime {
     defs: Definitions,
     /// The source each definition was evaluated from, by name.
@@ -36,6 +38,13 @@ impl Runtime {
             )));
         }
 
+        // TODO: refactor
+        if name == "in" {
+            return Err(RuntimeError::DefinitionError(
+                "in is a reserved symbol".to_string(),
+            ));
+        }
+
         let value = self.evaluate(source)?;
         self.defs.set(name.to_string(), value);
         self.sources.insert(name.to_string(), source.to_string());
@@ -50,6 +59,13 @@ impl Runtime {
             )));
         }
 
+        // TODO: refactor and add new error for reserved symbols, which should return EPERM
+        if name == "in" {
+            return Err(RuntimeError::DefinitionError(
+                "in is a reserved symbol".to_string(),
+            ));
+        }
+
         self.defs.remove(name);
         self.sources.remove(name);
 
@@ -60,11 +76,35 @@ impl Runtime {
         self.defs.bindings.iter()
     }
 
-    pub fn evaluate(&self, source: &str) -> Result<Value, RuntimeError> {
-        let source: Vec<&str> = source.split("/").collect();
+    /// Parse a source string into an AST expression without evaluating it.
+    pub fn parse(&self, source: &str) -> Result<Expression, ParseError> {
+        let segments: Vec<&str> = source.trim().split('/').collect();
+        parser::parse(&segments, &self.defs)
+    }
 
-        let ast = parser::parse(&source, &self.defs).map_err(RuntimeError::ParseError)?;
+    /// Evaluate a source string into a value, using the current definitions.
+    pub fn evaluate(&self, source: &str) -> Result<Value, RuntimeError> {
+        let ast = self.parse(source).map_err(RuntimeError::ParseError)?;
         eval::evaluate(&ast, &self.defs).map_err(RuntimeError::EvalError)
+    }
+
+    /// Evaluate an AST expression into a value, using the current definitions.
+    pub fn evaluate_ast(&self, expr: &Expression) -> Result<Value, RuntimeError> {
+        eval::evaluate(expr, &self.defs).map_err(RuntimeError::EvalError)
+    }
+
+    /// Evaluate an AST expression into a value, with extra top-level bindings.
+    pub fn evaluate_ast_with(
+        &self,
+        expr: &Expression,
+        bindings: impl IntoIterator<Item = (String, Value)>,
+    ) -> Result<Value, RuntimeError> {
+        let mut env = Environment::new();
+        for (name, value) in bindings {
+            env.set(name, value);
+        }
+
+        eval::evaluate_with_env(expr, Rc::new(env), &self.defs).map_err(RuntimeError::EvalError)
     }
 
     pub fn source(&self, name: &str) -> Option<String> {

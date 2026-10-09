@@ -107,7 +107,7 @@ pub fn evaluate_with_env(
                     }
                 };
 
-                let segments: Vec<&str> = source.split("/").collect();
+                let segments: Vec<&str> = source.trim().split("/").collect();
                 let expr = parser::parse(&segments, defs).map_err(EvalError::ParseError);
 
                 return Ok(quote_expr(&expr?));

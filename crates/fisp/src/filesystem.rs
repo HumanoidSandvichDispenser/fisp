@@ -14,9 +14,7 @@ use fisp_evaluator::{
     runtime::{Runtime, RuntimeError},
 };
 use fuser::{
-    self, Errno, FileHandle, FileType, Filesystem, FopenFlags, INodeNo,
-    OpenAccMode::{self, O_WRONLY},
-    OpenFlags,
+    self, Errno, FileHandle, FileType, Filesystem, FopenFlags, INodeNo, OpenAccMode, OpenFlags,
 };
 
 use crate::evaluator::Evaluator;
@@ -26,6 +24,7 @@ enum Kind {
     Dir,
     File(String),
     Symlink(String),
+    Session(Vec<u8>),
 }
 
 struct Node {
@@ -87,8 +86,12 @@ impl Table {
 }
 
 enum SessionState {
-    Done(Vec<u8>),
-    Collecting(Vec<u8>),
+    /// A plain file that was evaluated and is ready to be read.
+    Done { output: Vec<u8> },
+    /// An `in` session that is currently collecting input to be evaluated.
+    Collecting { path: Vec<String>, input: Vec<u8> },
+    /// An `in` session whose output is being read.
+    Collected { output: Vec<u8>, pos: usize },
 }
 
 pub struct FispFilesystem {
@@ -124,6 +127,7 @@ impl FispFilesystem {
             Kind::Dir => (0, FileType::Directory, 0o755, 2),
             Kind::File(content) => (content.len() as u64, FileType::RegularFile, 0o444, 1),
             Kind::Symlink(target) => (target.len() as u64, FileType::Symlink, 0o777, 1),
+            Kind::Session(content) => (0, FileType::RegularFile, 0o600, 1),
         };
 
         // get uid and gid from current user (the user running the process)
@@ -146,21 +150,16 @@ impl FispFilesystem {
         }
     }
 
+    fn path(&self, ino: INodeNo) -> Result<Vec<String>, Errno> {
+        let table = self.table.lock().unwrap();
+        let node = table.get(ino).ok_or(Errno::ENOENT)?;
+        Ok(node.path.clone())
+    }
+
     fn kind(&self, ino: INodeNo) -> Result<Kind, Errno> {
-        let revision = self.revision.load(Ordering::Acquire);
-
-        let path: Vec<String> = {
-            let table = self.table.lock().unwrap();
-            let node = table.get(ino).ok_or(Errno::ENOENT)?;
-            node.path.clone()
-        };
-
-        let kind = self.evaluator.run({
-            let path = path.clone();
-            move |rt| FispFilesystem::resolve(rt, &path)
-        })?;
-
-        Ok(kind)
+        let path = self.path(ino)?;
+        self.evaluator
+            .run(move |rt| FispFilesystem::resolve(rt, &path))
     }
 
     fn resolve(rt: &Runtime, path: &Vec<String>) -> Result<Kind, Errno> {
@@ -176,20 +175,65 @@ impl FispFilesystem {
         {
             Ok(Kind::Symlink(source))
         } else {
-            match rt.evaluate(&path.join("/")) {
+            let ast = rt.parse(&path.join("/"));
+
+            let ast = match ast {
+                Ok(ast) => ast,
+                Err(ParseError::BadName) => return Err(Errno::ENOENT),
+                Err(ParseError::StringNotTerminated) => return Err(Errno::ENOENT),
+                Err(ParseError::StringDecodeError) => return Err(Errno::EILSEQ),
+                Err(ParseError::Incomplete) => return Ok(Kind::Dir),
+            };
+
+            if ast.uses("in") {
+                return Ok(Kind::Session(Vec::new()));
+            }
+
+            match rt.evaluate_ast(&ast) {
                 Ok(Value::Closure { .. }) => Ok(Kind::Dir),
                 Ok(Value::String(s)) => Ok(Kind::File(s)),
                 Ok(value) => Ok(Kind::File(format!("{}\n", value.path_expr()))),
-                Err(RuntimeError::ParseError(ParseError::BadName)) => Err(Errno::ENOENT),
-                Err(RuntimeError::ParseError(ParseError::StringNotTerminated)) => {
-                    Err(Errno::ENOENT)
-                }
-                Err(RuntimeError::ParseError(ParseError::StringDecodeError)) => Err(Errno::EILSEQ),
-                Err(RuntimeError::ParseError(ParseError::Incomplete)) => Ok(Kind::Dir),
+                Err(RuntimeError::ParseError(_)) => unreachable!(),
                 Err(RuntimeError::EvalError(EvalError::UnresolvedSymbol(_))) => Err(Errno::ENOENT),
                 Err(RuntimeError::EvalError(_)) => Err(Errno::EIO),
                 Err(RuntimeError::DefinitionError(_)) => Err(Errno::EEXIST),
             }
+        }
+    }
+
+    fn next_chunk<'a>(output: &'a [u8], pos: &mut usize, size: u32) -> &'a [u8] {
+        let start = *pos;
+        let end = (start + size as usize).min(output.len());
+        *pos = end;
+        &output[start..end]
+    }
+
+    fn evaluate_with_input(
+        rt: &Runtime,
+        path: &[String],
+        input: Vec<u8>,
+    ) -> Result<Vec<u8>, Errno> {
+        let input = String::from_utf8(input).map_err(|_| Errno::EILSEQ)?;
+        let ast = rt.parse(&path.join("/")).map_err(|_| Errno::ENOENT)?;
+
+        let input_value = Value::String(input);
+        let bindings = vec![("in".to_string(), input_value)];
+
+        match rt.evaluate_ast_with(&ast, bindings) {
+            Ok(Value::Closure { .. }) => Err(Errno::EISDIR),
+            Ok(Value::String(s)) => Ok(s.into_bytes()),
+            Ok(value) => Ok(format!("{}\n", value.path_expr()).into_bytes()),
+            Err(RuntimeError::EvalError(EvalError::UnresolvedSymbol(_))) => Err(Errno::ENOENT),
+            Err(_) => Err(Errno::EIO),
+        }
+    }
+
+    fn is_session(&self, ino: INodeNo) -> bool {
+        let table = self.table.lock().unwrap();
+        if let Some(node) = table.get(ino) {
+            matches!(node.kind, Kind::Session(_))
+        } else {
+            false
         }
     }
 }
@@ -220,15 +264,11 @@ impl Filesystem for FispFilesystem {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEntry,
     ) {
-        let parent_path: Vec<String> = {
-            let table = self.table.lock().unwrap();
-            let node = table.get(parent).ok_or(Errno::ENOENT);
-            match node {
-                Ok(node) => node.path.clone(),
-                Err(errno) => {
-                    reply.error(errno);
-                    return;
-                }
+        let parent_path = match self.path(parent) {
+            Ok(path) => path,
+            Err(errno) => {
+                reply.error(errno);
+                return;
             }
         };
 
@@ -272,18 +312,44 @@ impl Filesystem for FispFilesystem {
         lock_owner: Option<fuser::LockOwner>,
         reply: fuser::ReplyData,
     ) {
-        let sessions = self.sessions.lock().unwrap();
-        match sessions.get(&fh) {
-            Some(SessionState::Done(content)) => {
-                let start = (offset as usize).min(content.len());
-                let end = (start + size as usize).min(content.len());
-                let slice = &content[start..end];
+        let mut sessions = self.sessions.lock().unwrap();
+        match sessions.get_mut(&fh) {
+            Some(SessionState::Done { output }) => {
+                let start = (offset as usize).min(output.len());
+                let end = (start + size as usize).min(output.len());
+                let slice = &output[start..end];
                 reply.data(slice);
             }
-            Some(SessionState::Collecting(_)) => {
-                todo!()
+            Some(SessionState::Collecting { path, input }) => {
+                let path = path.clone();
+                let input = std::mem::take(input);
+                drop(sessions);
+
+                // drop the lock before running the evaluator
+                let result = self
+                    .evaluator
+                    .run(move |rt| FispFilesystem::evaluate_with_input(rt, &path, input));
+
+                // reacquire
+                let mut sessions = self.sessions.lock().unwrap();
+                match result {
+                    Ok(output) => {
+                        let mut pos = 0;
+                        reply.data(FispFilesystem::next_chunk(&output, &mut pos, size));
+                        sessions.insert(fh, SessionState::Collected { output, pos });
+                    }
+                    Err(errno) => {
+                        let output = Vec::new();
+                        sessions.insert(fh, SessionState::Collected { output, pos: 0 });
+                        reply.error(errno);
+                    }
+                }
             }
-            None => reply.error(Errno::EBADF)
+            Some(SessionState::Collected { output, pos }) => {
+                let chunk = FispFilesystem::next_chunk(output, pos, size);
+                reply.data(chunk);
+            }
+            None => reply.error(Errno::EBADF),
         }
     }
 
@@ -440,20 +506,50 @@ impl Filesystem for FispFilesystem {
         flags: fuser::OpenFlags,
         reply: fuser::ReplyOpen,
     ) {
-        let fh = FileHandle(self.next_fh.fetch_add(1, Ordering::Relaxed));
-        let session = match self.kind(ino) {
-            Ok(Kind::File(content)) => SessionState::Done(content.into_bytes()),
-            Ok(Kind::Dir) => return reply.error(Errno::EISDIR),
-            Ok(Kind::Symlink(_)) => return reply.error(Errno::ELOOP),
+        let read_only = matches!(flags.acc_mode(), OpenAccMode::O_RDONLY);
+        if !read_only && !self.is_session(ino) {
+            return reply.error(Errno::EACCES);
+        }
+
+        let path = match self.path(ino) {
+            Ok(path) => path,
             Err(errno) => return reply.error(errno),
         };
+
+        // TODO: refactor into kind(path)
+        let kind = self.evaluator.run({
+            let path = path.clone();
+            move |rt| FispFilesystem::resolve(rt, &path)
+        });
+
+        let session = match kind {
+            Ok(Kind::File(content)) => SessionState::Done {
+                output: content.into_bytes(),
+            },
+            Ok(Kind::Dir) => return reply.error(Errno::EISDIR),
+            Ok(Kind::Symlink(_)) => return reply.error(Errno::ELOOP),
+            Ok(Kind::Session(_)) => SessionState::Collecting {
+                path,
+                input: Vec::new(),
+            },
+            Err(errno) => return reply.error(errno),
+        };
+
+        let open_flags = match session {
+            SessionState::Collecting { .. } => {
+                FopenFlags::FOPEN_DIRECT_IO | FopenFlags::FOPEN_STREAM
+            }
+            _ => FopenFlags::FOPEN_DIRECT_IO,
+        };
+
+        let fh = FileHandle(self.next_fh.fetch_add(1, Ordering::Relaxed));
 
         {
             let mut sessions = self.sessions.lock().unwrap();
             sessions.insert(fh, session);
         }
 
-        reply.opened(fh, FopenFlags::FOPEN_DIRECT_IO);
+        reply.opened(fh, open_flags);
     }
 
     fn release(
@@ -472,5 +568,35 @@ impl Filesystem for FispFilesystem {
             sessions.remove(&_fh);
         }
         reply.ok();
+    }
+
+    fn write(
+        &self,
+        _req: &fuser::Request,
+        _ino: INodeNo,
+        fh: FileHandle,
+        _offset: u64,
+        data: &[u8],
+        _write_flags: fuser::WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<fuser::LockOwner>,
+        reply: fuser::ReplyWrite,
+    ) {
+        let mut sessions = self.sessions.lock().unwrap();
+        match sessions.get_mut(&fh) {
+            Some(SessionState::Collecting { path: _, input }) => {
+                input.extend_from_slice(data);
+                reply.written(data.len() as u32);
+            }
+            Some(SessionState::Done { output: _ }) => {
+                reply.error(Errno::EBADF);
+            }
+            Some(SessionState::Collected { output: _, pos: _ }) => {
+                reply.error(Errno::EPIPE);
+            }
+            None => {
+                reply.error(Errno::EBADF);
+            }
+        }
     }
 }

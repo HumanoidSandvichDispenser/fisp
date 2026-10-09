@@ -82,7 +82,7 @@ impl fmt::Display for Sexp<'_> {
                     }
                 }
                 write!(f, "\"")
-            },
+            }
             Value::Cons(car, cdr) => {
                 write!(f, "({}", car.sexp())?;
                 let mut rest = cdr.as_ref();
@@ -335,6 +335,28 @@ pub enum Expression {
     Primitive(Op),
 }
 
+impl Expression {
+    /// Whether the expression uses the given symbol name as a free variable.
+    pub fn uses(&self, symbol_name: &str) -> bool {
+        match self {
+            Expression::String(_)
+            | Expression::Literal(_)
+            | Expression::Quote(_)
+            | Expression::Primitive(_) => false,
+            Expression::Symbol(name) => name == symbol_name,
+            Expression::If(cond, then_branch, else_branch) => {
+                cond.uses(symbol_name)
+                    || then_branch.uses(symbol_name)
+                    || else_branch.uses(symbol_name)
+            }
+            Expression::Lambda(param, body) => &**param != symbol_name && body.uses(symbol_name),
+            Expression::Application(head, args) => {
+                head.uses(symbol_name) || args.iter().any(|arg| arg.uses(symbol_name))
+            }
+        }
+    }
+}
+
 impl From<Value> for Expression {
     fn from(value: Value) -> Self {
         Expression::Literal(value)
@@ -344,6 +366,7 @@ impl From<Value> for Expression {
 #[cfg(test)]
 mod tests {
     use crate::runtime::Runtime;
+    use super::*;
 
     fn path_expr(runtime: &Runtime, source: &str) -> String {
         runtime.evaluate(source).unwrap().path_expr().to_string()
@@ -458,5 +481,21 @@ mod tests {
             "λ/n/if/@@=/n/0/1/@@mul/n/@factorial/@@-/n/1",
             "5",
         );
+    }
+
+    #[test]
+    fn uses_should_detect_free_variables() {
+        let expr = Expression::Lambda(
+            "x".into(),
+            Rc::new(Expression::If(
+                Box::new(Expression::Symbol("x".into())),
+                Box::new(Expression::Symbol("y".into())),
+                Box::new(Expression::Symbol("z".into())),
+            )),
+        );
+
+        assert!(!expr.uses("x"));
+        assert!(expr.uses("y"));
+        assert!(expr.uses("z"));
     }
 }

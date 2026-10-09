@@ -11,7 +11,7 @@ pub enum ParseError {
     Incomplete,
     BadName,
     StringNotTerminated,
-    StringDecodeError
+    StringDecodeError,
 }
 
 pub enum Token<'a> {
@@ -204,39 +204,41 @@ fn classify(segment: &str) -> Result<Token<'_>, ParseError> {
 
 // TODO: refactor lexer into separate file
 fn decode_string(string: &str) -> Result<String, ParseError> {
-    let mut result = String::new();
+    let mut result: Vec<u8> = Vec::new();
     let mut chars = string.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => result.push('\n'),
-                Some('t') => result.push('\t'),
-                Some('"') => result.push('"'),
-                Some('\\') => result.push('\\'),
-                Some(other) => {
+        let c = match c {
+            '\\' => match chars.next() {
+                Some('n') => '\n',
+                Some('t') => '\t',
+                Some('"') => '"',
+                Some('\\') => '\\',
+                _ => {
                     return Err(ParseError::StringDecodeError);
                 }
-                None => {
-                    return Err(ParseError::StringDecodeError);
-                }
-            }
-        } else if c == '%' {
-            // percent-encoded character
-            let hex_digits: String = chars.by_ref().take(2).collect();
-            if hex_digits.len() != 2 {
-                return Err(ParseError::StringDecodeError);
-            }
+            },
+            '%' => {
+                let hex_digits: String = chars.by_ref().take(2).collect();
 
-            let escaped_char = u8::from_str_radix(&hex_digits, 16)
-                .map_err(|_| ParseError::StringDecodeError)?;
-            result.push(escaped_char as char);
-        } else {
-            result.push(c);
-        }
+                if hex_digits.len() != 2 {
+                    return Err(ParseError::StringDecodeError);
+                }
+
+                let utf8_char = u8::from_str_radix(&hex_digits, 16)
+                    .map_err(|_| ParseError::StringDecodeError)?;
+
+                result.push(utf8_char);
+
+                continue;
+            }
+            c => c,
+        };
+
+        result.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
     }
 
-    Ok(result)
+    String::from_utf8(result).map_err(|_| ParseError::StringDecodeError)
 }
 
 fn eat(input: &mut &str, c: char) -> bool {
@@ -517,11 +519,26 @@ mod tests {
 
     #[test]
     fn string_should_decode_escape_sequences() {
-        assert_eq!(run(":hello\\nworld"), Value::String("hello\nworld".to_owned()));
-        assert_eq!(run(":tab\\tcharacter"), Value::String("tab\tcharacter".to_owned()));
-        assert_eq!(run(":quote\\\"test\\\""), Value::String("quote\"test\"".to_owned()));
-        assert_eq!(run(":backslash\\\\test"), Value::String("backslash\\test".to_owned()));
-        assert_eq!(run(":percent%20encoded"), Value::String("percent encoded".to_owned()));
+        assert_eq!(
+            run(":hello\\nworld"),
+            Value::String("hello\nworld".to_owned())
+        );
+        assert_eq!(
+            run(":tab\\tcharacter"),
+            Value::String("tab\tcharacter".to_owned())
+        );
+        assert_eq!(
+            run(":quote\\\"test\\\""),
+            Value::String("quote\"test\"".to_owned())
+        );
+        assert_eq!(
+            run(":backslash\\\\test"),
+            Value::String("backslash\\test".to_owned())
+        );
+        assert_eq!(
+            run(":percent%20encoded"),
+            Value::String("percent encoded".to_owned())
+        );
     }
 
     #[test]
@@ -536,5 +553,13 @@ mod tests {
     fn string_not_terminated_should_error() {
         assert_eq!(error("\"unterminated"), ParseError::StringNotTerminated);
         assert_eq!(error("\"extra char\" "), ParseError::StringNotTerminated);
+    }
+
+    #[test]
+    fn string_decode_should_accept_multibyte_utf8() {
+        assert_eq!(
+            run(":multibyte%E2%98%BA"),
+            Value::String("multibyte\u{263A}".to_owned())
+        );
     }
 }
